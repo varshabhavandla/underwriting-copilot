@@ -25,3 +25,9 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-310 P2 todo  Synthetic data generator (tax returns, statements, financials, applications).
 ## Later (out of MVP)
 - L-1 CRM beyond minimal lead tracking. L-2 Real servicing integrations. L-3 SOC 2 audit engagement.
+
+## Critique log
+Loop 2 (lender CISO / examiner view), objections and disposition:
+- C-201 P0: Rules were derived from a script-parsed .docx; a wrong threshold in the checklist would mislead underwriters. Action: B-111 spot-check every encoded rule against the published SOP, store rule -> SOP section mapping with SOP version, and fail CI if the mapping is missing.
+- C-202 P1: SOP changes frequently (8.1 effective 2026-10-01; notices in between). Action: B-112 rule packs versioned by SOP version and effective date; staleness check against SBA's SOP page.
+- C-203 P1: No evidence yet that AI-prepared files satisfy a lender's model-risk and vendor-management expectations. Action: covered by B-203/B-205; also LEGAL_REVIEW items 1 and 7.
