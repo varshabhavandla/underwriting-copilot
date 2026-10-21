@@ -1,7 +1,7 @@
 # STATE
 
-Phase: 1 (Research and positioning) - loop 1 complete (setup)
-Loop: 1
+Phase: 1 (Research and positioning) - loop 2 complete
+Loop: 2
 Date: 2026-10-21
 
 ## Open question for the builder (answer when convenient; defaults are in use)
@@ -12,8 +12,10 @@ Do you accept the default stack in DECISIONS.md D-002/D-003 (Python 3.12 + FastA
 - Existing foundation (stdlib Python: reconcile, versioned checklist, tenancy/idempotency store, synthetic fixtures, 12 tests + 6 fixture cases) moved to app/; verify still passes.
 - Domain decided: commercial lending (SME and SBA). Supersedes the open item in docs/decisions/0002.
 
-## Next (loop 2)
-B-101: Regulatory and process map for SBA 7(a)/504 from SOP 50 10 (primary sources first).
+- Loop 2: SBA process map from SOP 50 10 8.1 primary text (docs/SBA_PROCESS_MAP.md); sources S-1..S-6.
+
+## Next (loop 3)
+B-101 remainder: conventional SME process from regulator sources; SOP appendices 14/15/16/19; then B-102 competitive scan.
 
 ## Blockers
 None. No paid resources, no outside contact, no real data.

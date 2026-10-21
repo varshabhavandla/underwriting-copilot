@@ -8,3 +8,5 @@ Confidence: high | medium | low. Label: assumed unless a source is cited in SOUR
 | A-3 | Synthetic documents can approximate real extraction difficulty enough to rank approaches (not to claim production accuracy). | medium | Real-document pilot shows large gap. |
 | A-4 | Solo cloud cost stays low (under about $100/month) while only dev resources exist. | low | Not yet priced; must be verified from vendor price pages before provisioning. |
 | A-5 | The "up to 80%" time-to-decision claim is a pitch figure; unverified. | high (that it is unverified) | A cited study appears. |
+| A-6 | SOP text parsed from .docx is accurate enough to draft rules; tables may be lost. | medium | Spot-check against published SOP finds mismatches. |
+| A-7 | Reg B business-credit summary (S-5) is correct. | low | eCFR text differs from the fetch summary. |
