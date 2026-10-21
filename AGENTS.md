@@ -3,20 +3,20 @@
 Read this first. Applies to every coding agent working under `underwriting/`.
 
 ## What this is
-An underwriting assistant. MVP: upload one application packet -> extract facts with
+AI-assisted commercial lending platform (SME and SBA). Work state lives in `workspace/` (STATE.md, BACKLOG.md, DECISIONS.md, ASSUMPTIONS.md, SOURCES.md). Read STATE.md first.
+Original MVP sketch: MVP: upload one application packet -> extract facts with
 citations -> flag missing/conflicting info -> run one approved checklist -> draft a
 case memo -> an authorized underwriter approves or corrects.
-Domain (insurance / lending / commercial credit) is NOT yet chosen; rules in
-`src/uw/policy.py` are placeholders. See `docs/decisions/0002-domain-open.md`.
+Domain is commercial lending (DECISIONS D-006). Rules in `app/src/uw/policy.py` are placeholders until B-101 produces the real checklist.
 
 ## Commands
-- `bash scripts/verify.sh` - the only completion check (compile, unit tests, fixture replay). Must exit 0.
-- `python3 scripts/run_evals.py` - replay synthetic fixtures only.
+- `bash workspace/app/scripts/verify.sh` - the only completion check (compile, unit tests, fixture replay). Must exit 0.
+- `python3 workspace/app/scripts/run_evals.py` - replay synthetic fixtures only.
 - Python 3.10+, stdlib only so far. Add a dependency only with a decision record.
 
 ## Layout
-`src/uw/` models, pipeline (reconcile, missing docs, injection scan), policy (versioned checklist), store (tenancy/idempotency/decisions).
-`fixtures/synthetic/` expected-vs-actual cases. `docs/` design and decisions. `.claude/skills/` workflow skills.
+`workspace/app/src/uw/` models, pipeline (reconcile, missing docs, injection scan), policy (versioned checklist), store (tenancy/idempotency/decisions).
+`workspace/app/fixtures/synthetic/` expected-vs-actual cases. `workspace/docs/` design and decisions. `.claude/skills/` workflow skills.
 
 ## Boundaries (non-negotiable)
 1. AI extracts, reconciles, drafts. Calculations and policy rules are tested code. Only an authorized underwriter records a decision. The pipeline status is always `needs_review`.

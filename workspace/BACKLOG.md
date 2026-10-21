@@ -1,0 +1,27 @@
+# BACKLOG
+Status: todo | doing | done | blocked. Priority: P0 highest.
+
+## Phase 1
+- B-101 P0 todo  Regulatory/process map: SBA 7(a), 504, conventional SME (inquiry -> decision; docs; exceptions; automatable vs human).
+- B-102 P0 todo  Competitive scan: nCino, Taktile, Zest AI, Upstart, + verifiable SBA/commercial automation vendors. Wedge recommendation.
+- B-103 P1 todo  Time-to-decision measurement plan (measured vs estimated; simulated baseline definition).
+## Phase 2
+- B-201 P0 todo  Reference architecture + Mermaid (components, flows, trust boundaries, tenant isolation, per-tenant encryption).
+- B-202 P0 todo  Agentic layer design (LLM gateway, PII redaction, injection defenses vs OWASP LLM Top 10, approval gates, immutable audit).
+- B-203 P1 todo  Fair lending / model risk (ECOA/Reg B, SR 11-7 principles, versioned rules/prompts, adverse-action support).
+- B-204 P1 todo  DevSecOps blueprint (IaC, SAST, dep/secret scan, SBOM, signing, policy as code).
+- B-205 P1 todo  Compliance roadmap (GLBA, FFIEC, TPRM, SOC 2 staging) + draft vendor questionnaire answers.
+- B-206 P1 todo  Needs-legal-or-compliance-review list (maintained continuously in docs/LEGAL_REVIEW.md).
+## Phase 3 (in order)
+- B-301 P0 todo  Scaffold, local dev (docker compose), CI, IaC skeleton (partly done: CI + verify exist).
+- B-302 P0 todo  Domain model + multi-tenant data layer (Postgres RLS) + audit log.
+- B-303 P0 todo  Borrower application flow (form + upload).
+- B-304 P0 todo  Document ingestion: extraction/validation with confidence (tax returns, bank statements, financials).
+- B-305 P0 todo  Rules engine + AI agent: completeness, consistency, exceptions, credit memo draft.
+- B-306 P0 todo  Underwriter console with explicit approve/decline/request-info.
+- B-307 P1 todo  Mock servicing adapter + events/webhooks.
+- B-308 P0 todo  Evaluation harness + measured time-to-decision vs simulated baseline.
+- B-309 P1 todo  Observability, hardening, threat model review.
+- B-310 P2 todo  Synthetic data generator (tax returns, statements, financials, applications).
+## Later (out of MVP)
+- L-1 CRM beyond minimal lead tracking. L-2 Real servicing integrations. L-3 SOC 2 audit engagement.
