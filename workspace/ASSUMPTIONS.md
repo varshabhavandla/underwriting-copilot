@@ -10,3 +10,5 @@ Confidence: high | medium | low. Label: assumed unless a source is cited in SOUR
 | A-5 | The "up to 80%" time-to-decision claim is a pitch figure; unverified. | high (that it is unverified) | A cited study appears. |
 | A-6 | SOP text parsed from .docx is accurate enough to draft rules; tables may be lost. | medium | Spot-check against published SOP finds mismatches. |
 | A-7 | Reg B business-credit summary (S-5) is correct. | low | eCFR text differs from the fetch summary. |
+| A-8 | Vercel Functions can host the FastAPI API for the MVP, with long extraction jobs handled by a separate async mechanism. | low | Function duration/size limits or queue options do not fit document processing (unverified). |
+| A-9 | Vercel's reported SOC 2 Type 2 helps, but a lender will still require its own subprocessor review of every vendor, including Vercel. | medium | A target lender accepts hosted-platform attestations alone. |

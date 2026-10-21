@@ -1,6 +1,9 @@
 # STATE
 
-Phase: 1 (Research and positioning) - loop 2 complete
+## Open questions for the builder
+2. Vercel is recorded as hosting (D-007). Confirm you are fine with Python 3.12 + FastAPI on Vercel Functions, with the database and background-job choice still open.
+
+Phase: 1 (Research and positioning) - loop 2 complete (+ inputs folded in)
 Loop: 2
 Date: 2026-10-21
 

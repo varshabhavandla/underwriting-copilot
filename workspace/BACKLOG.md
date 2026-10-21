@@ -3,8 +3,8 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 
 ## Phase 1
 - B-101 P0 doing Regulatory/process map. SBA 7(a)/504 done (docs/SBA_PROCESS_MAP.md). Remaining: conventional SME (OCC/FDIC/Fed sources), SOP appendices 14,15,16,19, Reg B, 504 detail.
-- B-102 P0 todo  Competitive scan: nCino, Taktile, Zest AI, Upstart, + verifiable SBA/commercial automation vendors. Wedge recommendation.
 - B-103 P1 todo  Time-to-decision measurement plan (measured vs estimated; simulated baseline definition).
+- B-113 P1 todo  Vercel fit check: function duration/payload limits, background jobs, Postgres and storage options, region pinning, data-handling terms; read the Trust Center SOC 2 scope. Decide D-008 (data store, storage, jobs).
 ## Phase 2
 - B-201 P0 todo  Reference architecture + Mermaid (components, flows, trust boundaries, tenant isolation, per-tenant encryption).
 - B-202 P0 todo  Agentic layer design (LLM gateway, PII redaction, injection defenses vs OWASP LLM Top 10, approval gates, immutable audit).

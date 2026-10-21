@@ -18,3 +18,9 @@ Hypothesis: SBA 7(a) file preparation and exception detection for small communit
 
 ## D-006 Domain
 Commercial lending (SME and SBA). Supersedes docs/decisions/0002 (domain open).
+
+## D-007 Hosting: Vercel (builder direction, 2026-10-21)
+Supersedes the hosting part of D-003 (AWS). Options: Vercel; AWS; hybrid. Choice: Vercel for the web app and API (Python FastAPI runs as Vercel Functions per Vercel docs; default region iad1). Rationale: builder preference, low ops load for a solo builder.
+Not decided yet: database (Vercel marketplace Postgres vs AWS RDS), object storage for borrower documents, background processing for long extraction jobs (function duration limits not yet verified), per-tenant encryption keys (KMS), and the LLM/OCR provider (Bedrock/Textract/other). Mixing clouds adds subprocessors to a lender's vendor review.
+Constraints found (S-7): Hobby plan is restricted to non-commercial personal use; any production or revenue-linked use needs Pro or Enterprise. Pro allows up to 5 regions. Routing Middleware runs in every region regardless of region settings, so no regulated-data logic in middleware.
+Rule: nothing is deployed, and no account or paid plan is created, without asking the builder first. Local dev stays Docker Compose.

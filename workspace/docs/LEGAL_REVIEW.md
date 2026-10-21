@@ -10,3 +10,4 @@ Not legal advice. Items accumulate here for counsel.
 7. Whether SBA lender rules allow a lender to rely on an AI-prepared credit memorandum, and what the lender must attest about its own analysis (SOP says the lender's credit analysis is subject to SBA review).
 8. Use of IRS transcripts (Form 4506-C/8821) by a vendor on behalf of a lender: authorization scope and IVES participation.
 9. SBA citizenship/residency rules changed by a March 2026 notice; confirm current text before encoding.
+11. Vercel as a service provider for borrower NPI: data processing terms, subprocessor list, and whether the plan tier offers the terms a lender will want.
