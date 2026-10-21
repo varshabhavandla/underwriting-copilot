@@ -1,8 +1,13 @@
 {
   "compilerOptions": {
     "target": "ES2022",
+    "lib": [
+      "ES2023",
+      "DOM"
+    ],
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
@@ -10,7 +15,35 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["node"]
+    "incremental": true,
+    "types": [
+      "node"
+    ],
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    },
+    "allowJs": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
   },
-  "include": ["src", "test", "scripts"]
+  "include": [
+    "src",
+    "test",
+    "scripts",
+    "app",
+    "next-env.d.ts",
+    "*.ts",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }

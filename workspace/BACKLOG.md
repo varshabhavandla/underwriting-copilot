@@ -17,8 +17,8 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-205 P1 done  Compliance roadmap and draft questionnaire answers (docs/COMPLIANCE_ROADMAP.md).
 - B-206 P1 todo  Needs-legal-or-compliance-review list (maintained continuously in docs/LEGAL_REVIEW.md).
 ## Phase 3 (in order)
-- B-301 P0 doing Scaffold, local dev (docker compose), CI, IaC skeleton. Done: TypeScript core, verify, CI. Todo: Next.js shell, local Postgres, IaC.
-- B-302 P0 todo  Domain model + multi-tenant data layer (Postgres RLS) + audit log.
+- B-301 P0 done  Scaffold: TypeScript core, Next.js shell (health, cases page), CI with Postgres service, docker-compose (written, not run here). IaC skeleton deferred to B-122 until D-013/D-014 are decided.
+- B-302 P0 done  Domain model + multi-tenant data layer: migration 0001 (forced RLS, append-only decisions and audit, hash-chained ledger, decision gate), repo layer, 42 tests on real Postgres 16, 4 mutation checks, end-to-end demo.
 - B-303 P0 todo  Borrower application flow (form + upload).
 - B-304 P0 todo  Document ingestion: extraction/validation with confidence (tax returns, bank statements, financials).
 - B-305 P0 todo  Rules engine + AI agent: completeness, consistency, exceptions, credit memo draft.
@@ -32,6 +32,8 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-119 P2 todo  CI check that every diagrams/*.mmd parses and docs embed the current copy.
 - B-120 P1 todo  Implement CI controls from DEVSECOPS.md: secret scan, dependency audit, SAST, SBOM, IaC policy checks, RLS policy tests; decide attestation approach on Vercel.
 - B-121 P1 todo  Primary-source follow-ups: OCC bulletin text for SR 26-2 companion, Federal Register 88 FR 37920 (third-party guidance), 16 CFR 314, AICPA Trust Services Criteria, Reg B text, CFPB circular status.
+- B-122 P1 todo  IaC skeleton (after D-013/D-014); run docker-compose locally; add Postgres roles/RLS test to run against the chosen managed database.
+- B-123 P1 todo  Add to the ledger tests: hash-chain anchoring design, per-tenant sequence gaps under rollbacks (a rolled-back insert leaves no gap because seq is computed inside the transaction), pooler (transaction mode) test.
 ## Workflow adoption (own design; skills from broomva/skills, MIT)
 - B-401 P1 todo  Root router + scoped instruction files per package; AGENTS.md as the canonical file with CLAUDE.md pointing to it; skills in one canonical dir.
 - B-402 P0 todo  Database-enforced invariants: forced row-level security on every table, no role with BYPASSRLS, append-only hash-chained audit/ledger, provenance required for every fact, one shared write path. Tests that fail if any is weakened.
@@ -64,3 +66,8 @@ Loop 5 (lender CISO / examiner view), objections and disposition:
 - C-501 P0: Several compliance statements rest on secondary sources. Action: B-121; the questionnaire answers carry status tags and no claim exceeds what is true today.
 - C-502 P0: "Designed to support audit evidence" can be read as a compliance claim. Action: wording rule in the roadmap (no certification language before an issued report); add a claims-review step using the legal-readiness skill before any external document.
 - C-503 P1: A solo vendor is a concentration and continuity risk for a bank (key-person, business continuity). Action: add escrow/continuity and documentation commitments to the vendor pack; list as a known limitation.
+
+Loop 6 (lender CISO / examiner view), objections and disposition:
+- C-601 P0: Tests ran on a locally installed Postgres 16, not the managed database we will use, and the Docker Compose file was not run. Action: B-122 reruns the same suite against the chosen managed Postgres before any real data.
+- C-602 P0: The app role can insert users (admin path) and the dev tenant stand-in is not authentication. Action: D-011/B-117; restrict user provisioning to an admin role and remove DEV_TENANT_ID path once auth exists; guard already fails closed in production.
+- C-603 P1: The hash chain detects tampering by a privileged actor only if someone verifies it and the head is anchored outside the database. Action: B-123 and anchoring in the hardening phase; claim "tamper-evident", not "tamper-proof".

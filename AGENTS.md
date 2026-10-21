@@ -10,7 +10,7 @@ case memo -> an authorized underwriter approves or corrects.
 Domain is commercial lending (DECISIONS D-006). Rules in `app/src/policy.ts` are placeholders until B-101 produces the real checklist.
 
 ## Commands
-- `bash workspace/app/scripts/verify.sh` - the only completion check (typecheck, unit tests, fixture replay). Must exit 0.
+- `bash workspace/app/scripts/verify.sh` - the only completion check (typecheck, unit and database tests, fixture replay, end-to-end demo, build). Needs `UW_TEST_ADMIN_URL` (disposable local Postgres superuser URL). Must exit 0.
 - From `workspace/app`: `npm run typecheck | test | evals`. Node 22+, TypeScript strict, Vitest. Add a dependency only with a decision record.
 - Run `npm ci` first in a fresh checkout.
 
@@ -27,6 +27,7 @@ Domain is commercial lending (DECISIONS D-006). Rules in `app/src/policy.ts` are
 6. Jobs must be idempotent (see `idempotency_key`).
 7. Real customer data and credentials never enter this repo. Fixtures are synthetic only. Set `BOOKKEEPING_COHERENCE_GATE=0`; never put borrower or lender-confidential data in the knowledge graph.
 8. Model-stated confidence never decides acceptance of a fact.
+9. Database rules are code: every table has forced RLS and a tenant_id, the app role is not an owner and has no BYPASSRLS, decisions and audit events are append-only. Tests prove each denial with a positive control; do not weaken them. Migrations are forward-only SQL in `workspace/app/db/migrations`.
 
 ## Definition of done
 `verify.sh` passes; new behavior has a test and, if it changes outputs, a fixture; no policy

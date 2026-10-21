@@ -46,3 +46,6 @@ Choice: modular monolith in one Next.js/TypeScript codebase on Vercel, a pure-Ty
 
 ## D-017 Model-risk reference point (2026-10-21)
 Use SR 26-2 (April 17, 2026) principles, not SR 11-7 (superseded). Our deterministic rules are outside its "model" definition; our generative components are outside its scope but are governed with the same evidence pack (inventory, versioning, evaluation, monitoring, change control). Revisit if a lender or examiner treats the tool as a model.
+
+## D-018 Local development database (2026-10-21)
+Postgres 16 with two roles: uw_owner (owns tables, migrations only) and uw_app (application; not superuser, no BYPASSRLS, owns nothing). Passwords in the repo are local-only. Production database vendor remains open (D-014); the test suite is the acceptance test for any candidate: it must pass unchanged against the candidate.
