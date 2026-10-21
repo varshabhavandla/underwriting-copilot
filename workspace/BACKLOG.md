@@ -12,9 +12,9 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 ## Phase 2
 - B-201 P0 done  Reference architecture + 6 Mermaid diagrams (docs/ARCHITECTURE.md; diagrams/*.mmd parse-checked).
 - B-202 P0 done  Agentic layer design (docs/AGENTIC_LAYER.md).
-- B-203 P1 todo  Fair lending / model risk (ECOA/Reg B, SR 11-7 principles, versioned rules/prompts, adverse-action support).
+- B-203 P1 done  Fair lending / model risk (docs/FAIR_LENDING_MODEL_RISK.md); SR 11-7 superseded by SR 26-2, D-017.
 - B-204 P1 todo  DevSecOps blueprint (IaC, SAST, dep/secret scan, SBOM, signing, policy as code).
-- B-205 P1 todo  Compliance roadmap (GLBA, FFIEC, TPRM, SOC 2 staging) + draft vendor questionnaire answers.
+- B-205 P1 done  Compliance roadmap and draft questionnaire answers (docs/COMPLIANCE_ROADMAP.md).
 - B-206 P1 todo  Needs-legal-or-compliance-review list (maintained continuously in docs/LEGAL_REVIEW.md).
 ## Phase 3 (in order)
 - B-301 P0 doing Scaffold, local dev (docker compose), CI, IaC skeleton. Done: TypeScript core, verify, CI. Todo: Next.js shell, local Postgres, IaC.
@@ -30,6 +30,8 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-117 P1 todo  Decide D-011 authentication provider against criteria (SSO, organizations, audit log, residency); verify price and security pages.
 - B-118 P1 todo  Verify D-013/D-014/D-015: per-tenant key support, Postgres options with forced RLS and PITR, LLM provider data terms and SOC reports; produce a cost model from vendor price pages.
 - B-119 P2 todo  CI check that every diagrams/*.mmd parses and docs embed the current copy.
+- B-120 P1 todo  Implement CI controls from DEVSECOPS.md: secret scan, dependency audit, SAST, SBOM, IaC policy checks, RLS policy tests; decide attestation approach on Vercel.
+- B-121 P1 todo  Primary-source follow-ups: OCC bulletin text for SR 26-2 companion, Federal Register 88 FR 37920 (third-party guidance), 16 CFR 314, AICPA Trust Services Criteria, Reg B text, CFPB circular status.
 ## Workflow adoption (own design; skills from broomva/skills, MIT)
 - B-401 P1 todo  Root router + scoped instruction files per package; AGENTS.md as the canonical file with CLAUDE.md pointing to it; skills in one canonical dir.
 - B-402 P0 todo  Database-enforced invariants: forced row-level security on every table, no role with BYPASSRLS, append-only hash-chained audit/ledger, provenance required for every fact, one shared write path. Tests that fail if any is weakened.
@@ -57,3 +59,8 @@ Loop 4 (lender CISO / examiner view), objections and disposition:
 - C-401 P0: Redaction before the model may break extraction, and injection defenses are "defense in depth" with no proof. Action: adversarial and redaction test sets are part of B-308; results reported, not assumed (A-15).
 - C-402 P0: Hybrid cloud (Vercel plus AWS keys/storage) multiplies subprocessors and credential paths. Action: B-118 compares an all-Vercel-marketplace option to the hybrid; choose the smaller vendor set that still gives per-tenant keys.
 - C-403 P1: A solo builder is the only reviewer (G-E). Action: B-407 records each review; flag as a known limitation in the lender security answers.
+
+Loop 5 (lender CISO / examiner view), objections and disposition:
+- C-501 P0: Several compliance statements rest on secondary sources. Action: B-121; the questionnaire answers carry status tags and no claim exceeds what is true today.
+- C-502 P0: "Designed to support audit evidence" can be read as a compliance claim. Action: wording rule in the roadmap (no certification language before an issued report); add a claims-review step using the legal-readiness skill before any external document.
+- C-503 P1: A solo vendor is a concentration and continuity risk for a bank (key-person, business continuity). Action: add escrow/continuity and documentation commitments to the vendor pack; list as a known limitation.

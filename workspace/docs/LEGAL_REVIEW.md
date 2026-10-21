@@ -15,3 +15,7 @@ Not legal advice. Items accumulate here for counsel.
 13. Whether SBA program rules restrict or require disclosure of vendor use in file preparation, and the lender's attestation when a tool computes DSC and collateral figures.
 14. Marketing claims about competitors (nCino, Parlay, Ocrolus) must be limited to verified, sourced statements.
 15. Section 1071 data collection (reported compliance date 2028): confirm applicability to our customers before building.
+16. Whether a lender will treat our extraction/drafting components as models in its inventory, given SR 26-2 excludes generative and agentic AI from its scope but expects governance of such tools.
+17. What outcome data we may export to a lender for its own disparate-impact monitoring, and what protected-basis information we may or must not collect or surface.
+18. Contract terms for GLBA service-provider obligations, audit rights and subcontractor flow-down.
+19. Current status of CFPB Circulars 2022-03 and 2023-03 on adverse action reasons with complex models.

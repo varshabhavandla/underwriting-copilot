@@ -18,3 +18,5 @@ Confidence: high | medium | low. Label: assumed unless a source is cited in SOUR
 | A-13 | Vercel Workflows can run our document pipeline within beta limits and acceptable cost. | low | Limits, pricing or maturity block it; fall back to a queue plus worker. |
 | A-14 | Per-tenant keys can be held in a managed key service reachable from Vercel without a long-lived cloud credential. | low | No supported short-lived federation; use a different storage/key vendor. |
 | A-15 | Redaction plus schema-checked, tool-less calls keep extraction accurate enough on synthetic data. | low | Evaluation shows accuracy collapse when identifiers are tokenized. |
+| A-16 | Most target community banks fall under the $30B line where SR 26-2 is not expected to apply, and will govern our tools by their own vendor and AI policies. | medium | A target lender is above $30B or its examiner treats our tools as models. |
+| A-17 | A lender will accept Stage 1 evidence plus an external penetration test for a small pilot before a SOC 2 report exists. | low | Lenders require a SOC 2 report before any pilot. |

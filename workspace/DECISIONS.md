@@ -43,3 +43,6 @@ Recorded in docs/ARCHITECTURE.md section 7: authentication provider (D-011), doc
 
 ## D-012 Architecture shape (provisional, 2026-10-21)
 Choice: modular monolith in one Next.js/TypeScript codebase on Vercel, a pure-TypeScript domain core, durable workflows for processing, a single LLM gateway, Postgres with forced RLS and an append-only ledger, direct-to-storage uploads. Rejected for the MVP: microservices (solo builder), vector search/RAG (no need yet, extra attack surface), fine-tuning on tenant data.
+
+## D-017 Model-risk reference point (2026-10-21)
+Use SR 26-2 (April 17, 2026) principles, not SR 11-7 (superseded). Our deterministic rules are outside its "model" definition; our generative components are outside its scope but are governed with the same evidence pack (inventory, versioning, evaluation, monitoring, change control). Revisit if a lender or examiner treats the tool as a model.

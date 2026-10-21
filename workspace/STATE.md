@@ -14,13 +14,14 @@ Do you accept the default stack in DECISIONS.md D-002/D-003 (Python 3.12 + FastA
 - Existing foundation (stdlib Python: reconcile, versioned checklist, tenancy/idempotency store, synthetic fixtures, 12 tests + 6 fixture cases) moved to app/; verify still passes.
 - Domain decided: commercial lending (SME and SBA). Supersedes the open item in docs/decisions/0002.
 
+- Loop 5: fair lending and model risk (SR 11-7 was superseded by SR 26-2 on 2026-04-17), DevSecOps blueprint, compliance roadmap with questionnaire draft.
 - Loop 4: measurement plan, reference architecture with 6 diagrams, agentic layer (OWASP LLM Top 10 2025 mapping, approval gates, audit event schema). Open decisions D-011, D-013..D-016.
 - Loop 3: SBA appendices 14/15/16/17/19, SBA eligibility change (Aug 2023), conventional SME outline, competitive scan and provisional wedge D-010 (nCino+Parlay now contest SBA intake).
 - Loop 2.5: ported core to TypeScript (14 tests, 6 fixture cases pass); installed broomva/skills (MIT) under .agents/skills with attribution.
 - Loop 2: SBA process map from SOP 50 10 8.1 primary text (docs/SBA_PROCESS_MAP.md); sources S-1..S-6.
 
-## Next (loop 5)
-B-203 fair lending and model risk (verify ECOA/Reg B, SR 11-7 sources), then B-204 DevSecOps blueprint and B-205 compliance roadmap. B-116 and B-117/B-118 need builder input or vendor-page verification.
+## Next (loop 6)
+Phase 3 begins: B-301 scaffold (Next.js shell, local Postgres via Docker Compose, IaC skeleton), then B-302 multi-tenant data layer with RLS and tests (needs D-014 database choice, defaulting to local Postgres for development). Builder decisions pending: B-116 lender conversations, B-117 auth provider, connect Vercel connector (see reply).
 
 ## Blockers
 None. No paid resources, no outside contact, no real data.
