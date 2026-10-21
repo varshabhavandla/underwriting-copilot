@@ -5,13 +5,13 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-101 P0 done  Regulatory/process map (SBA: docs/SBA_PROCESS_MAP.md incl. appendices 14,15(part),16,17,19; conventional: docs/CONVENTIONAL_SME_PROCESS.md). Follow-ups B-111, B-115.
 - (was) B-101 SBA 7(a)/504 done (docs/SBA_PROCESS_MAP.md). Remaining: conventional SME (OCC/FDIC/Fed sources), SOP appendices 14,15,16,19, Reg B, 504 detail.
 - B-102 P0 done  Competitive scan and provisional wedge (docs/COMPETITIVE_SCAN.md, D-010). Follow-up B-116.
-- B-103 P1 todo  Time-to-decision measurement plan (measured vs estimated; simulated baseline definition).
+- B-103 P1 done  Measurement plan (docs/MEASUREMENT_PLAN.md). Execution is B-308.
 - B-113 P1 todo  Vercel fit check: function duration/payload limits, background jobs, Postgres and storage options, region pinning, data-handling terms; read the Trust Center SOC 2 scope. Decide D-008 (data store, storage, jobs).
 - B-115 P1 todo  Read SOP Appendix 15 in full (equity injection percentages) and 504 chapters before encoding those rule packs; spot-check every rule vs the published SOP (see C-201).
 - B-116 P0 todo  Validate wedge: open vendor trust centers, find other SBA-specific vendors, and prepare 5 lender interview questions (A-10..A-12). Needs builder to arrange conversations.
 ## Phase 2
-- B-201 P0 todo  Reference architecture + Mermaid (components, flows, trust boundaries, tenant isolation, per-tenant encryption).
-- B-202 P0 todo  Agentic layer design (LLM gateway, PII redaction, injection defenses vs OWASP LLM Top 10, approval gates, immutable audit).
+- B-201 P0 done  Reference architecture + 6 Mermaid diagrams (docs/ARCHITECTURE.md; diagrams/*.mmd parse-checked).
+- B-202 P0 done  Agentic layer design (docs/AGENTIC_LAYER.md).
 - B-203 P1 todo  Fair lending / model risk (ECOA/Reg B, SR 11-7 principles, versioned rules/prompts, adverse-action support).
 - B-204 P1 todo  DevSecOps blueprint (IaC, SAST, dep/secret scan, SBOM, signing, policy as code).
 - B-205 P1 todo  Compliance roadmap (GLBA, FFIEC, TPRM, SOC 2 staging) + draft vendor questionnaire answers.
@@ -27,6 +27,9 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-308 P0 todo  Evaluation harness + measured time-to-decision vs simulated baseline.
 - B-309 P1 todo  Observability, hardening, threat model review.
 - B-310 P2 todo  Synthetic data generator (tax returns, statements, financials, applications).
+- B-117 P1 todo  Decide D-011 authentication provider against criteria (SSO, organizations, audit log, residency); verify price and security pages.
+- B-118 P1 todo  Verify D-013/D-014/D-015: per-tenant key support, Postgres options with forced RLS and PITR, LLM provider data terms and SOC reports; produce a cost model from vendor price pages.
+- B-119 P2 todo  CI check that every diagrams/*.mmd parses and docs embed the current copy.
 ## Workflow adoption (own design; skills from broomva/skills, MIT)
 - B-401 P1 todo  Root router + scoped instruction files per package; AGENTS.md as the canonical file with CLAUDE.md pointing to it; skills in one canonical dir.
 - B-402 P0 todo  Database-enforced invariants: forced row-level security on every table, no role with BYPASSRLS, append-only hash-chained audit/ledger, provenance required for every fact, one shared write path. Tests that fail if any is weakened.
@@ -49,3 +52,8 @@ Loop 3 (lender CISO / examiner view), objections and disposition:
 - C-301 P0: Reg B, 1071 and OCC points rest on search summaries and a 1990/1998 handbook. Action: B-115/B-116 plus counsel items 13-15; no rule ships on a summary alone.
 - C-302 P1: Wedge rests on absence-of-evidence about competitors. Action: B-116 verifies trust centers and searches for more SBA vendors; keep D-010 provisional.
 - C-303 P1: Nothing yet measured about time saved; the only 80 percent figure we found is an unnamed-customer vendor claim. Action: B-103 and B-308 define a simulated baseline; report by file class.
+
+Loop 4 (lender CISO / examiner view), objections and disposition:
+- C-401 P0: Redaction before the model may break extraction, and injection defenses are "defense in depth" with no proof. Action: adversarial and redaction test sets are part of B-308; results reported, not assumed (A-15).
+- C-402 P0: Hybrid cloud (Vercel plus AWS keys/storage) multiplies subprocessors and credential paths. Action: B-118 compares an all-Vercel-marketplace option to the hybrid; choose the smaller vendor set that still gives per-tenant keys.
+- C-403 P1: A solo builder is the only reviewer (G-E). Action: B-407 records each review; flag as a known limitation in the lender security answers.

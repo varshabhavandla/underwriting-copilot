@@ -15,3 +15,6 @@ Confidence: high | medium | low. Label: assumed unless a source is cited in SOUR
 | A-10 | Community-bank PLP lenders feel enough pain around SOP conformance and credit memo prep to pay for file review. | low | Lender interviews show the pain is elsewhere or already covered by their LOS. |
 | A-11 | nCino/Parlay will not quickly deliver deep SOP-cited file review. | low | An nCino or Parlay release covers it. |
 | A-12 | Mid-size and small lenders not on nCino exist in large enough numbers to reach LOS-agnostically. | low | Lender-landscape research shows the segment is small or locked into integrated suites. |
+| A-13 | Vercel Workflows can run our document pipeline within beta limits and acceptable cost. | low | Limits, pricing or maturity block it; fall back to a queue plus worker. |
+| A-14 | Per-tenant keys can be held in a managed key service reachable from Vercel without a long-lived cloud credential. | low | No supported short-lived federation; use a different storage/key vendor. |
+| A-15 | Redaction plus schema-checked, tool-less calls keep extraction accurate enough on synthetic data. | low | Evaluation shows accuracy collapse when identifiers are tokenized. |

@@ -1,0 +1,13 @@
+stateDiagram-v2
+  [*] --> Received
+  Received --> Processing: documents stored and hashed
+  Processing --> NeedsReview: extraction, validation, rules and draft complete
+  Processing --> Failed: unrecoverable error (retryable, idempotent)
+  NeedsReview --> InfoRequested: underwriter requests more information
+  InfoRequested --> Processing: new documents received
+  NeedsReview --> Approved: underwriter approves
+  NeedsReview --> Declined: underwriter declines
+  Approved --> HandedOff: servicing event emitted after the decision
+  Declined --> [*]
+  HandedOff --> [*]
+  Failed --> Processing: retry

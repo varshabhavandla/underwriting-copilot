@@ -1,0 +1,20 @@
+sequenceDiagram
+  autonumber
+  participant Doc as Document text (untrusted)
+  participant Pre as Pre-processor
+  participant GW as LLM gateway
+  participant M as Model
+  participant Val as Validators (code)
+  participant L as Audit ledger
+  participant H as Underwriter
+  Doc->>Pre: raw text and layout
+  Pre->>Pre: strip active content, detect instruction-like text, flag
+  Pre->>GW: redacted text in a fenced data block
+  GW->>GW: policy: allowed task, prompt version, token and cost budget, no tools
+  GW->>M: fixed system prompt plus data block, output schema
+  M-->>GW: structured output only
+  GW->>Val: schema validation, citation must exist in source text, numbers re-derived
+  Val-->>GW: pass or reject
+  GW->>L: record prompt version, model id, input hash, output hash, validators, result
+  GW-->>H: proposals with evidence links, exceptions, draft memo
+  H->>L: approve, decline or request info (only path to a decision)

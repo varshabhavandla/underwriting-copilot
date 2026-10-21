@@ -1,0 +1,45 @@
+flowchart LR
+  subgraph Users
+    B[Borrower]
+    U[Underwriter]
+    A[Lender admin]
+  end
+  subgraph Vercel["Vercel (Next.js app, TypeScript)"]
+    WEB[Web app: borrower portal, underwriter console, admin]
+    API[API routes and server actions: authn, tenant context, validation]
+    WF[Durable workflows: ingestion, extraction, rules, memo draft]
+  end
+  subgraph Core["Domain core (pure TypeScript library)"]
+    RULES[Rule packs: SOP 50 10 8.1, versioned, cited]
+    CALC[Calculators: DSC, collateral, guaranty, integer cents]
+    GATE[Authorization and decision gate]
+  end
+  subgraph Data["Data plane"]
+    PG[(Postgres: forced RLS, append-only audit ledger)]
+    OBJ[(Object storage: documents, per-tenant keys)]
+    KMS[Key management: per-tenant keys]
+  end
+  LLMGW[LLM gateway: redaction, schema-checked output, budgets, logging]
+  LLM[(LLM and OCR providers)]
+  IDP[Identity provider: SSO, MFA]
+  SERV[Servicing adapter interface]
+  MOCK[Mock lender servicing system]
+  B --> WEB
+  U --> WEB
+  A --> WEB
+  WEB --> API
+  API --> IDP
+  API --> PG
+  API --> OBJ
+  API --> WF
+  WF --> RULES
+  WF --> CALC
+  WF --> LLMGW
+  LLMGW --> LLM
+  WF --> PG
+  WF --> OBJ
+  API --> GATE
+  OBJ --- KMS
+  PG --- KMS
+  GATE --> SERV
+  SERV --> MOCK

@@ -1,0 +1,34 @@
+flowchart TB
+  subgraph Internet["Untrusted: internet and borrower-supplied content"]
+    BR[Browsers]
+    DOCS[Uploaded documents: untrusted data, may contain instructions]
+  end
+  subgraph Edge["Boundary 1: authenticated edge (Vercel)"]
+    APP[App and API]
+  end
+  subgraph Tenant["Boundary 2: tenant isolation"]
+    PGT[(Rows scoped by tenant: forced RLS)]
+    OBJT[(Objects under tenant prefix and tenant key)]
+  end
+  subgraph Proc["Boundary 3: document processing (no write or decision tools)"]
+    EXT[Extraction and drafting workers]
+  end
+  subgraph Ext["Boundary 4: third parties (subprocessors)"]
+    LLMP[LLM provider]
+    OCRP[OCR provider if separate]
+    IDPP[Identity provider]
+    HOST[Hosting and database vendors]
+  end
+  subgraph Human["Boundary 5: decision authority"]
+    UWR[Authorized underwriter]
+  end
+  BR --> APP
+  DOCS --> OBJT
+  APP --> PGT
+  OBJT --> EXT
+  EXT -->|redacted text only| LLMP
+  EXT --> OCRP
+  APP --> IDPP
+  EXT -->|proposals only| PGT
+  PGT --> UWR
+  UWR -->|decision record| PGT

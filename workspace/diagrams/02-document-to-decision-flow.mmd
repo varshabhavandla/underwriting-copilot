@@ -1,0 +1,28 @@
+sequenceDiagram
+  autonumber
+  participant Bor as Borrower
+  participant App as App/API
+  participant Obj as Object storage
+  participant WF as Workflow
+  participant GW as LLM gateway
+  participant DB as Postgres + ledger
+  participant UW as Underwriter
+  Bor->>App: request upload URL (authenticated, tenant scoped)
+  App->>Obj: create signed URL (tenant prefix, size and type limits)
+  Bor->>Obj: upload document directly (bypasses 4.5 MB function limit)
+  Obj-->>WF: object-created event (idempotency key = tenant, case, content hash)
+  WF->>DB: ledger: document received (hash, version)
+  WF->>WF: malware scan, type check, OCR and layout
+  WF->>GW: extract candidate facts (document text is data, never instructions)
+  GW-->>WF: schema-valid facts with page and passage citations
+  WF->>WF: deterministic validators (totals, dates, formats, cross-document checks)
+  WF->>DB: facts stored as proposed, with citations, ledger entries
+  WF->>WF: run rule pack, calculators, exception detection
+  WF->>GW: draft memo sections from accepted fact IDs only
+  GW-->>WF: draft with fact-ID citations
+  WF->>WF: verify every number and claim matches a fact or calculation
+  WF->>DB: case status needs_review
+  UW->>App: open prepared file, exceptions, evidence links
+  UW->>App: approve / decline / request more info, with reasons
+  App->>DB: decision appended (reviewer, rule versions, overrides)
+  App->>App: servicing event emitted only after a recorded human decision

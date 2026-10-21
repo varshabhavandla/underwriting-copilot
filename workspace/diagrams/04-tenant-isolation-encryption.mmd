@@ -1,0 +1,11 @@
+flowchart LR
+  REQ[Request with verified identity] --> CTX[Tenant context: tenant id from the session, never from the request body]
+  CTX --> TX[Transaction: SET LOCAL app.tenant_id]
+  TX --> RLS[Postgres forced row-level security: app role is not owner, no BYPASSRLS]
+  RLS --> ROWS[(Tenant rows)]
+  CTX --> PFX[Object key = tenant id / case id / content hash]
+  PFX --> ENV[Envelope encryption]
+  ENV --> DEK[Data key per tenant]
+  DEK -->|wrapped by| KEK[Key in key management service, one per tenant]
+  KEK -.->|revoke or schedule deletion| SHRED[Tenant offboarding: documents unreadable]
+  MIG[Migration role: owns tables, used only by CI] -.-> RLS

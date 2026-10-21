@@ -22,3 +22,7 @@ S-19 | https://taktile.com/credit-decision-automation and related pages (search 
 S-20 | zest.ai blog and third-party pages (search summary only) | Zest AI / Upstart comparisons | 2026-10-21 | Explainability and fair-lending claims; consumer focus
 S-21 | https://www.ocrolus.com/small-business-funding/ and related pages (search summary only) | Ocrolus small-business funding | 2026-10-21 | Extraction and cash-flow analytics claims
 S-22 | https://www.biz2x.com/sba-loan-software/optimizing-sba-loan-software-for-banks/ (search result only, not opened) | Biz2X SBA loan software article | 2026-10-21 | Vendor-authored claims that SBA rules are embedded; unverified
+S-23 | https://genai.owasp.org/llm-top-10/ | OWASP Top 10 for LLM Applications, 2025 | 2026-10-21 | LLM01-LLM10 titles
+S-24 | https://vercel.com/docs/functions/limitations (last_updated 2026-08-24 per page) | Vercel Functions limits | 2026-10-21 | Pro max duration 800s (1800s beta), 4.5 MB request/response body, 500 MB Python bundle, default region iad1, Workflows for unlimited duration
+S-25 | https://www.postgresql.org/docs/current/ddl-rowsecurity.html | PostgreSQL: Row Security Policies | 2026-10-21 | Default deny; owners bypass unless FORCE; BYPASSRLS and superusers bypass
+S-26 | https://vercel.com/docs/queues and https://vercel.com/docs/workflows (search summary only) | Vercel Queues and Workflows | 2026-10-21 | Queues beta, at-least-once; Workflows durable steps

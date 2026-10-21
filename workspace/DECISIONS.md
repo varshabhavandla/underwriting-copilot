@@ -37,3 +37,9 @@ Use skills from https://github.com/broomva/skills (public, MIT), copied into `.a
 Choice: SBA 7(a) file review and credit-memo drafting for community-bank PLP lenders: cited extraction, SOP-mapped exception detection, human underwriter decision. Standard 7(a) and 7(a) Small first.
 Rationale (docs/COMPETITIVE_SCAN.md): front-end intake and eligibility is now contested by nCino plus Parlay; SBA determines eligibility itself; lender-owned analysis and documentation exposure remains. Rejected: intake wedge, ML credit scoring, generic extraction as a product.
 Status: provisional until a lender conversation tests A-10 to A-12. Owner of the next review: builder.
+
+## D-011 to D-016 Open architecture decisions (2026-10-21)
+Recorded in docs/ARCHITECTURE.md section 7: authentication provider (D-011), document storage and tenant keys (D-013), database (D-014), LLM/OCR providers (D-015), background execution (D-016). D-012 below is accepted.
+
+## D-012 Architecture shape (provisional, 2026-10-21)
+Choice: modular monolith in one Next.js/TypeScript codebase on Vercel, a pure-TypeScript domain core, durable workflows for processing, a single LLM gateway, Postgres with forced RLS and an append-only ledger, direct-to-storage uploads. Rejected for the MVP: microservices (solo builder), vector search/RAG (no need yet, extra attack surface), fine-tuning on tenant data.
