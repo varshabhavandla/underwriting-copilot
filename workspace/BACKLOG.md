@@ -23,6 +23,14 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-308 P0 todo  Evaluation harness + measured time-to-decision vs simulated baseline.
 - B-309 P1 todo  Observability, hardening, threat model review.
 - B-310 P2 todo  Synthetic data generator (tax returns, statements, financials, applications).
+## Workflow adoption from SRI patterns (ideas only, own wording; blocked on legal item 12 for any copying)
+- B-401 P1 todo  Root router + scoped instruction files per package; AGENTS.md as the canonical file with CLAUDE.md pointing to it; skills in one canonical dir.
+- B-402 P0 todo  Database-enforced invariants: forced row-level security on every table, no role with BYPASSRLS, append-only hash-chained audit/ledger, provenance required for every fact, one shared write path. Tests that fail if any is weakened.
+- B-403 P1 todo  Ticket-as-prompt template (agent brief + verify commands); one ticket = one branch = one PR; verification receipts in the PR body.
+- B-404 P1 todo  Pre-push fast checks (lint, types, tests, secret scan) and CI required checks incl. secret scan and migration-from-zero on a throwaway database.
+- B-405 P1 todo  Control-gate hook for destructive commands, with a SINGLE source of truth for the denylist (SRI's own docs warn about two copies drifting).
+- B-406 P2 todo  Knowledge graph + handoff skills once docs exceed what STATE/DECISIONS can carry.
+- B-407 P1 todo  Our own change-control rule for lender audit-readiness: SRI has no human reviewer by design; we need at least builder review for rules, tenancy and security paths, recorded per change.
 ## Later (out of MVP)
 - L-1 CRM beyond minimal lead tracking. L-2 Real servicing integrations. L-3 SOC 2 audit engagement.
 

@@ -24,3 +24,6 @@ Supersedes the hosting part of D-003 (AWS). Options: Vercel; AWS; hybrid. Choice
 Not decided yet: database (Vercel marketplace Postgres vs AWS RDS), object storage for borrower documents, background processing for long extraction jobs (function duration limits not yet verified), per-tenant encryption keys (KMS), and the LLM/OCR provider (Bedrock/Textract/other). Mixing clouds adds subprocessors to a lender's vendor review.
 Constraints found (S-7): Hobby plan is restricted to non-commercial personal use; any production or revenue-linked use needs Pro or Enterprise. Pro allows up to 5 regions. Routing Middleware runs in every region regardless of region settings, so no regulated-data logic in middleware.
 Rule: nothing is deployed, and no account or paid plan is created, without asking the builder first. Local dev stays Docker Compose.
+
+## D-008 Language/stack (OPEN, recommendation pending builder answer)
+Reopens D-002. Options: (a) Python/FastAPI (current ~300-line foundation); (b) TypeScript + Next.js on Vercel with Postgres. Considerations: Vercel is TypeScript-native; the SRI patterns the builder wants (RLS tests, verify, hooks) are written for a TS/Bun stack; document extraction calls an LLM API and does not need Python. Recommendation: (b) for app and API, keep Python only for the evaluation harness if useful. Not changed until the builder confirms.
