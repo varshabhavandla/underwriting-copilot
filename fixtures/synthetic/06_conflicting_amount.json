@@ -1,0 +1,81 @@
+{
+  "packet": {
+    "case_ref": "SYN-006",
+    "documents": [
+      {
+        "id": "d1",
+        "type": "application_form",
+        "version": 1,
+        "pages": [
+          "Applicant: Jane Roe. Requested amount: $50,000."
+        ]
+      },
+      {
+        "id": "d2",
+        "type": "identity_document",
+        "version": 1,
+        "pages": [
+          "Name: Jane Roe"
+        ]
+      },
+      {
+        "id": "d3",
+        "type": "income_statement",
+        "version": 1,
+        "pages": [
+          "Monthly income summary for Jane Roe."
+        ]
+      }
+    ],
+    "facts": [
+      {
+        "key": "applicant_name",
+        "value": "Jane Roe",
+        "citation": {
+          "doc_id": "d1",
+          "doc_version": 1,
+          "page": 1,
+          "passage": "Applicant: Jane Roe"
+        }
+      },
+      {
+        "key": "applicant_name",
+        "value": "Jane Roe",
+        "citation": {
+          "doc_id": "d2",
+          "doc_version": 1,
+          "page": 1,
+          "passage": "Name: Jane Roe"
+        }
+      },
+      {
+        "key": "requested_amount",
+        "value": "50,000",
+        "citation": {
+          "doc_id": "d1",
+          "doc_version": 1,
+          "page": 1,
+          "passage": "Requested amount: $50,000."
+        }
+      },
+      {
+        "key": "requested_amount",
+        "value": "500,000",
+        "citation": {
+          "doc_id": "d3",
+          "doc_version": 1,
+          "page": 1,
+          "passage": "Requested: $500,000"
+        }
+      }
+    ]
+  },
+  "expected": {
+    "missing_documents": [],
+    "conflict_keys": [
+      "requested_amount"
+    ],
+    "injection_flags": 0,
+    "checklist_passed": false
+  }
+}
