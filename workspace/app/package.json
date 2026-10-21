@@ -1,0 +1,20 @@
+{
+  "name": "underwriting-copilot",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "evals": "tsx scripts/run-evals.ts",
+    "verify": "npm run typecheck && npm run test && npm run evals"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

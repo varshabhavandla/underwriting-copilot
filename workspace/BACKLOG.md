@@ -13,7 +13,7 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-205 P1 todo  Compliance roadmap (GLBA, FFIEC, TPRM, SOC 2 staging) + draft vendor questionnaire answers.
 - B-206 P1 todo  Needs-legal-or-compliance-review list (maintained continuously in docs/LEGAL_REVIEW.md).
 ## Phase 3 (in order)
-- B-301 P0 todo  Scaffold, local dev (docker compose), CI, IaC skeleton (partly done: CI + verify exist).
+- B-301 P0 doing Scaffold, local dev (docker compose), CI, IaC skeleton. Done: TypeScript core, verify, CI. Todo: Next.js shell, local Postgres, IaC.
 - B-302 P0 todo  Domain model + multi-tenant data layer (Postgres RLS) + audit log.
 - B-303 P0 todo  Borrower application flow (form + upload).
 - B-304 P0 todo  Document ingestion: extraction/validation with confidence (tax returns, bank statements, financials).
@@ -23,14 +23,15 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-308 P0 todo  Evaluation harness + measured time-to-decision vs simulated baseline.
 - B-309 P1 todo  Observability, hardening, threat model review.
 - B-310 P2 todo  Synthetic data generator (tax returns, statements, financials, applications).
-## Workflow adoption from SRI patterns (ideas only, own wording; blocked on legal item 12 for any copying)
+## Workflow adoption (own design; skills from broomva/skills, MIT)
 - B-401 P1 todo  Root router + scoped instruction files per package; AGENTS.md as the canonical file with CLAUDE.md pointing to it; skills in one canonical dir.
 - B-402 P0 todo  Database-enforced invariants: forced row-level security on every table, no role with BYPASSRLS, append-only hash-chained audit/ledger, provenance required for every fact, one shared write path. Tests that fail if any is weakened.
 - B-403 P1 todo  Ticket-as-prompt template (agent brief + verify commands); one ticket = one branch = one PR; verification receipts in the PR body.
 - B-404 P1 todo  Pre-push fast checks (lint, types, tests, secret scan) and CI required checks incl. secret scan and migration-from-zero on a throwaway database.
-- B-405 P1 todo  Control-gate hook for destructive commands, with a SINGLE source of truth for the denylist (SRI's own docs warn about two copies drifting).
-- B-406 P2 todo  Knowledge graph + handoff skills once docs exceed what STATE/DECISIONS can carry.
-- B-407 P1 todo  Our own change-control rule for lender audit-readiness: SRI has no human reviewer by design; we need at least builder review for rules, tenancy and security paths, recorded per change.
+- B-405 P1 todo  Control-gate hook for destructive commands, with a SINGLE source of truth for the denylist (two copies of a rule drift apart).
+- B-406 P2 todo  Configure kg/bookkeeping (knowledge: block, PyYAML+mistune) once docs exceed what STATE/DECISIONS can carry. Skills are installed (D-009); coherence gate stays off.
+- B-408 P1 todo  Review the installed scripts (p9, persist, bookkeeping) before first run; decide which skills we keep.
+- B-407 P1 todo  Our own change-control rule for lender audit-readiness: a fully agent-merged flow has no human reviewer; we need at least builder review for rules, tenancy and security paths, recorded per change.
 ## Later (out of MVP)
 - L-1 CRM beyond minimal lead tracking. L-2 Real servicing integrations. L-3 SOC 2 audit engagement.
 

@@ -7,15 +7,15 @@ AI-assisted commercial lending platform (SME and SBA). Work state lives in `work
 Original MVP sketch: MVP: upload one application packet -> extract facts with
 citations -> flag missing/conflicting info -> run one approved checklist -> draft a
 case memo -> an authorized underwriter approves or corrects.
-Domain is commercial lending (DECISIONS D-006). Rules in `app/src/uw/policy.py` are placeholders until B-101 produces the real checklist.
+Domain is commercial lending (DECISIONS D-006). Rules in `app/src/policy.ts` are placeholders until B-101 produces the real checklist.
 
 ## Commands
-- `bash workspace/app/scripts/verify.sh` - the only completion check (compile, unit tests, fixture replay). Must exit 0.
-- `python3 workspace/app/scripts/run_evals.py` - replay synthetic fixtures only.
-- Python 3.10+, stdlib only so far. Add a dependency only with a decision record.
+- `bash workspace/app/scripts/verify.sh` - the only completion check (typecheck, unit tests, fixture replay). Must exit 0.
+- From `workspace/app`: `npm run typecheck | test | evals`. Node 22+, TypeScript strict, Vitest. Add a dependency only with a decision record.
+- Run `npm ci` first in a fresh checkout.
 
 ## Layout
-`workspace/app/src/uw/` models, pipeline (reconcile, missing docs, injection scan), policy (versioned checklist), store (tenancy/idempotency/decisions).
+`workspace/app/src/` models, money (integer cents), pipeline (reconcile, missing docs, injection scan), policy (versioned checklist), store (tenancy/idempotency/decisions).
 `workspace/app/fixtures/synthetic/` expected-vs-actual cases. `workspace/docs/` design and decisions. `.claude/skills/` workflow skills.
 
 ## Boundaries (non-negotiable)
@@ -25,7 +25,7 @@ Domain is commercial lending (DECISIONS D-006). Rules in `app/src/uw/policy.py` 
 4. Every case access is scoped by `org_id`; cross-org reads fail identically to "not found".
 5. Decisions are append-only and record reviewer, policy version, reasons, overrides.
 6. Jobs must be idempotent (see `idempotency_key`).
-7. Real customer data, credentials, and SRI data/credentials never enter this repo. Fixtures are synthetic only.
+7. Real customer data and credentials never enter this repo. Fixtures are synthetic only. Set `BOOKKEEPING_COHERENCE_GATE=0`; never put borrower or lender-confidential data in the knowledge graph.
 8. Model-stated confidence never decides acceptance of a fact.
 
 ## Definition of done
@@ -35,4 +35,4 @@ change without bumping `version`; non-trivial changes get a fresh-context review
 
 ## Do not
 Skip or weaken tests to get green; edit expected fixture output to match new behavior without
-saying why in the PR; invent policy rules; copy SRI paths, ticket prefixes or DB rules.
+saying why in the PR; invent policy rules; copy code or text from another organization's private repositories.

@@ -1,0 +1,5215 @@
+#!/usr/bin/env python3
+"""
+p9.py — Broomva CI watcher + productive-wait primitive (bstack P9).
+
+Replaces sleep-based CI waits with an event-driven control loop:
+  - `gh pr checks <pr> --watch` via run_in_background as the notification
+    mechanism (not polling).
+  - context-scoped wait-queue draining session/memory/graph/docs/Linear
+    while CI runs.
+  - classifier (fast regex filter) + evaluator (progress score) self-heal
+    loop with stability-budget termination.
+  - merge authorization delegated to existing control metalayer
+    (.control/policy.yaml). P9 emits MERGE_READY; metalayer authorizes.
+
+Stdlib-only at runtime. Test-only deps (pytest, vcrpy) live under
+tests/requirements-dev.txt.
+
+Spec: docs/superpowers/specs/2026-05-04-p9-ci-watcher-design.md
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import dataclasses
+import datetime as _dt
+import enum
+import errno
+import fcntl
+import hashlib
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Iterable, Iterator
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Exit codes (composable shell semantics)
+# ─────────────────────────────────────────────────────────────────────────────
+EXIT_OK = 0
+EXIT_DEGRADED = 1                # recoverable: run again, may succeed
+EXIT_POLICY_ERROR = 2            # policy.yaml missing/malformed (fail-closed)
+EXIT_USAGE = 3                   # bad CLI args
+EXIT_EXTERNAL_ERROR = 4          # gh/Linear/network failure
+EXIT_CONCURRENCY_CEILING = 5     # max_concurrent_prs reached
+EXIT_HEAL_LOCK_TIMEOUT = 6
+EXIT_AUTO_MERGE_BLOCKED = 7      # auto_merge policy says require_human / notify
+EXIT_PENDING = 8                 # foreground slice ended before the wait settled: re-run it (BRO-2815)
+EXIT_INVARIANT_VIOLATION = 99    # cardinal-rule breach: cannot persist state
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Paths
+# ─────────────────────────────────────────────────────────────────────────────
+def p9_home() -> Path:
+    """State directory; overridable via BROOMVA_P9_HOME for tests."""
+    override = os.environ.get("BROOMVA_P9_HOME")
+    if override:
+        return Path(override)
+    xdg = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(xdg) / "broomva" / "p9"
+
+
+def state_jsonl() -> Path:
+    return p9_home() / "state.jsonl"
+
+
+def wait_queue_jsonl() -> Path:
+    return p9_home() / "wait-queue.jsonl"
+
+
+def pending_escalations_jsonl() -> Path:
+    return p9_home() / "pending-escalations.jsonl"
+
+
+def heal_lock_path() -> Path:
+    return p9_home() / "heal.lock"
+
+
+def state_lock_path() -> Path:
+    return p9_home() / "state.lock"
+
+
+def queue_lock_path() -> Path:
+    return p9_home() / "queue.lock"
+
+
+def session_lock_path() -> Path:
+    return p9_home() / "session.lock"
+
+
+def session_default_id_path() -> Path:
+    return p9_home() / "session-default.id"
+
+
+def waits_jsonl() -> Path:
+    """Generic (non-PR) waits live in their own stream — never in
+    state.jsonl, whose consumers parse every row's to_state as PRState."""
+    return p9_home() / "waits.jsonl"
+
+
+def waits_lock_path() -> Path:
+    return p9_home() / "waits.lock"
+
+
+def notify_jsonl() -> Path:
+    """Audit trail: every notification P9 attempted, with per-channel
+    delivery results. This is the always-on floor of the termination
+    invariant — even with zero channels configured, the row lands here."""
+    return p9_home() / "notify.jsonl"
+
+
+def notify_lock_path() -> Path:
+    return p9_home() / "notify.lock"
+
+
+def notify_config_path() -> Path:
+    return p9_home() / "notify.json"
+
+
+def logs_dir() -> Path:
+    return p9_home() / "logs"
+
+
+def heartbeats_dir() -> Path:
+    return p9_home() / "heartbeats"
+
+
+def stuck_markers_dir() -> Path:
+    return p9_home() / "stuck"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Host wake semantics (BRO-2815)
+#
+# On some hosts a finished background task never wakes an idle agent session.
+# Paseo is the measured case: across 2026-09 the fleet coordinator had to send
+# "wait in the FOREGROUND" ~50 times to sessions parked on a `p9 watch` or a
+# reviewer they had put in the background. There the only wait that completes
+# is a foreground one — and a foreground Bash call is capped at 10 minutes,
+# where a killed watcher folds to ABANDONED. So `watch` and `wait-for` slice
+# their foreground wait under the cap on such hosts and return EXIT_PENDING
+# with "run me again", which the agent can do without ever going idle.
+# ─────────────────────────────────────────────────────────────────────────────
+HOST_MARKERS: tuple[str, ...] = ("PASEO_AGENT_ID", "P9_BACKGROUND_WAKES",
+                                 "CLAUDECODE")
+BASH_CALL_CAP_SECONDS = 600
+DEFAULT_SLICE_SECONDS = 540
+
+
+def host_profile() -> dict[str, Any]:
+    """Which wait regime this host needs. `P9_BACKGROUND_WAKES=0|1` overrides
+    detection, for a host p9 does not know or a Paseo build that fixes wakes."""
+    paseo = bool(os.environ.get("PASEO_AGENT_ID", "").strip())
+    if paseo:
+        host = "paseo"
+    elif os.environ.get("CLAUDECODE"):
+        host = "claude-code"
+    else:
+        host = "unknown"
+    wakes, source = not paseo, ("PASEO_AGENT_ID" if paseo else "default")
+    override = os.environ.get("P9_BACKGROUND_WAKES", "").strip()
+    if override in ("0", "1"):
+        wakes, source = override == "1", "P9_BACKGROUND_WAKES"
+    return {
+        "host": host,
+        "background_wakes": wakes,
+        "wait_mode": "background" if wakes else "foreground",
+        "source": source,
+        "bash_call_cap_seconds": BASH_CALL_CAP_SECONDS,
+        "default_slice_seconds": None if wakes else DEFAULT_SLICE_SECONDS,
+    }
+
+
+def resolve_slice(requested: float | None) -> float | None:
+    """`--slice N` wins (0 disables); otherwise the host's default."""
+    if requested is not None:
+        return float(requested) if requested > 0 else None
+    return host_profile()["default_slice_seconds"]
+
+
+# Harness markers that identify ONE agent stream. Each row is (env var, id
+# prefix); the prefix of the first present row survives into the session id so
+# `p9 status` shows which harness answered — a bare hash would make an
+# isolation failure indistinguishable from a derivation failure.
+#
+# Adding a harness is one row. Values are hashed verbatim; nothing here parses
+# them, so a harness changing its format cannot silently split one session.
+SESSION_MARKERS: tuple[tuple[str, str], ...] = (
+    # Claude Code: per-session control socket, path embeds the session pid.
+    ("CLAUDE_CODE_MESSAGING_SOCKET", "cc"),
+    # Orca: per-worktree agent launch identity, `<uuid>::<worktree path>`.
+    ("ORCA_WORKTREE_ID", "orca"),
+    # Generic contract for any other harness, without a code change.
+    ("AGENT_SESSION_ID", "agent"),
+)
+
+# Field separator for the composite payload. This alone does NOT make the
+# encoding unambiguous — an env var value may contain any byte except NUL,
+# Unit Separator included, so a crafted value can reproduce a separator. The
+# framing in `_composite_id` is length-prefixed for that reason; a test pins
+# that a value cannot forge a field boundary.
+_MARKER_SEP = "\x1f"
+
+
+def _present_markers() -> dict[str, str]:
+    """Every declared marker currently set, name -> **raw** value.
+
+    Values are not stripped. An earlier revision stripped them "to be forgiving
+    about whitespace" and thereby merged ``'x'``, ``' x '`` and ``'x  '`` into
+    one scope — four declared identities collapsing to one, which is the exact
+    defect class this module exists to remove. Whitespace only decides
+    *presence*; it never decides *identity*.
+    """
+    out: dict[str, str] = {}
+    for name, _prefix in SESSION_MARKERS:
+        raw = os.environ.get(name)
+        if raw is not None and raw.strip():
+            out[name] = raw
+    return out
+
+
+def _composite_id(markers: dict[str, str]) -> str:
+    """Id over **every** present marker, in declaration order.
+
+    Composite rather than first-present (BRO-2373 round 1 BLOCKER): with
+    first-present, a marker shared by two agents masks a lower-priority marker
+    that distinguishes them — two Fanout agents under one Claude process but
+    in different Orca worktrees both resolved to the same `cc-*` id and starved
+    each other exactly as before. Composing is never *less* discriminating: an
+    identical marker set yields an identical id, and any difference in any
+    marker yields a different one.
+
+    64 bits of SHA-256. That is a bound, not impossibility — at the scale of
+    concurrent agent sessions on one machine the birthday probability is
+    negligible, but the code does not claim collisions cannot happen.
+    """
+    prefix = next(p for n, p in SESSION_MARKERS if n in markers)
+    # Length-prefixed framing: `name:len(value):value`. A value containing the
+    # separator, an `=`, or another marker's name cannot forge a field
+    # boundary, because the reader is told each value's length up front. An
+    # earlier revision joined `name=value` on a separator and asserted in a
+    # comment that no env value could contain it — false, and the test that
+    # now pins this caught it.
+    payload = _MARKER_SEP.join(
+        f"{n}:{len(markers[n])}:{markers[n]}"
+        for n, _p in SESSION_MARKERS if n in markers)
+    # `surrogateescape`: os.environ decodes undecodable POSIX bytes into
+    # surrogates, and a plain .encode() raises UnicodeEncodeError on them.
+    digest = hashlib.sha256(
+        payload.encode("utf-8", "surrogateescape")).hexdigest()
+    return f"{prefix}-{digest[:16]}"
+
+
+def derived_session_id() -> str | None:
+    """Session id derived from the harness, or None if no marker is present.
+
+    **Composite over every present marker**, never first-present. A marker
+    shared by two agents would otherwise mask a lower-priority marker that
+    distinguishes them: two agents under one Claude process but in different
+    Orca worktrees both resolved to one `cc-*` id and starved each other. The
+    composite is never *less* discriminating — an identical marker set gives an
+    identical id, any difference gives a different *payload* — hence a
+    different id, up to the 64-bit bound below.
+
+    **No latch, deliberately.** A previous revision latched the composite so a
+    marker appearing or disappearing mid-session would keep its identity. That
+    is unsound, and demonstrably so: adoption by marker-set overlap is
+    non-transitive. ``A={cc:S, orca:W1}`` latches, ``A={cc:S}`` adopts A's id
+    and records a *subset* latch, and then ``B={cc:S, orca:W2}`` — which
+    correctly rejects A's full latch — adopts the subset one and merges into A.
+    Verified against this function; the round-1 BLOCKER came back through the
+    round-2 fix for it.
+
+    The two requirements are irreconcilable here, not merely hard:
+
+    * stability across a changing marker set *requires* adopting on partial
+      overlap;
+    * distinctness *requires* never adopting on partial overlap, because a
+      shared marker is exactly what two concurrent agents have in common.
+
+    Only an identifier present on **every** invocation satisfies both, and p9
+    cannot mint one — it has to be issued by the harness. That is
+    ``BROOMVA_P9_SESSION`` (rung 1), and wiring it is tracked separately.
+
+    So the accepted failure mode here is **fragmentation rather than merging**
+    — barring a 64-bit hash collision, and barring two agents whose marker sets
+    are genuinely identical, which no derivation can separate. An
+    agent whose environment is sanitized mid-session (``env -i`` strips these)
+    changes identity and loses its queued work. That costs a ceiling slot and
+    some orphaned queue items. Merging costs isolation — the whole property
+    this function exists to provide. Between an edge case that over-isolates
+    and one that under-isolates, only the first is safe to ship.
+
+    Public so `p9 doctor` can report the resolved identity without
+    re-implementing the precedence.
+    """
+    markers = _present_markers()
+    if not markers:
+        return None
+    return _composite_id(markers)
+
+
+def current_session_id() -> str:
+    """Resolve the scope key for this invocation.
+
+    This is the keystone of parallel-session safety: every state event and
+    wait-queue item is stamped with it, and the concurrency ceiling counts
+    per-session. Two concurrent agents with *different* session ids never
+    collide on the ceiling or steal each other's wait-work.
+
+    Precedence:
+      1. ``BROOMVA_P9_SESSION`` env — an explicit override for a harness that
+         knows its own scope better than we can infer it (``bstack wave``
+         plans, tests).
+      2. A composite over every harness marker present
+         (:data:`SESSION_MARKERS`), recomputed each call — **not** latched; see
+         :func:`derived_session_id` for why a latch is unsound here. This is
+         what makes isolation the **default** rather than an opt-in.
+      3. A persisted per-state-dir uuid (``session-default.id``) — the
+         pre-derivation behavior, for environments exposing no marker at all.
+
+    Why derivation exists (BRO-2373): rung 1 was the *only* isolating path, and
+    a workspace-wide grep found it set in tests and nowhere else. Every real
+    agent therefore landed on rung 3 — one shared id — so the per-session
+    ceiling degenerated to a global one and two agents in one repo starved each
+    other at ``max_concurrent_prs: 1``. 1364 of 3508 recorded events carried
+    that single shared id. The docstring this replaces asserted that "separate
+    processes share no other stable per-session marker"; that was never true in
+    either harness this workspace runs under.
+
+    **Stability is a binding constraint that derivation cannot fully meet.**
+    An id that moves between two invocations of one session fragments the
+    ceiling and orphans the wait-queue. Derivation reads env only, so a marker
+    *file* being unlinked cannot move the id — but a marker *variable*
+    disappearing does, and no latch can fix that soundly
+    (:func:`derived_session_id`). A harness needing continuity across a
+    sanitized environment must set ``BROOMVA_P9_SESSION`` (rung 1).
+
+    The git worktree is deliberately **not** a marker. An agent that ``cd``s
+    between repos, routine in this monorepo, would otherwise change identity
+    mid-session. ``ORCA_WORKTREE_ID`` already carries worktree identity where a
+    harness chose to expose it.
+
+    Known and bounded: a recycled pid can reproduce a prior session's marker.
+    ``p9 reap`` drains dead rows, but a *live* watcher left by a dead parent is
+    not safely drainable, so this is a real residue rather than a solved
+    problem — narrower than rung 3, which shares one scope unconditionally, and
+    not zero.
+
+    The rung-3 fallback is created under ``session.lock`` (double-checked) so a
+    burst of concurrent first-invocations converges on a single id.
+    """
+    env = os.environ.get("BROOMVA_P9_SESSION")
+    if env and env.strip():
+        return env.strip()
+    derived = derived_session_id()
+    if derived is not None:
+        return derived
+    path = session_default_id_path()
+    if path.exists():
+        txt = path.read_text(encoding="utf-8").strip()
+        if txt:
+            return txt
+    with file_lock(session_lock_path()):
+        if path.exists():
+            txt = path.read_text(encoding="utf-8").strip()
+            if txt:
+                return txt
+        sid = "default-" + uuid.uuid4().hex[:12]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Atomic write (temp + replace) so a reader on the *unlocked* fast
+        # path can never observe a partial id — it sees either no file or the
+        # complete one. (The under-lock recheck above already guarantees
+        # correctness; this removes any doubt for lock-free readers.)
+        tmp = path.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(sid, encoding="utf-8")
+        os.replace(tmp, path)
+        return sid
+
+
+def policy_yaml_path() -> Path:
+    """Resolve .control/policy.yaml.
+
+    Honors BROOMVA_P9_POLICY env var (used by tests). Otherwise walks from
+    cwd upward looking for `.control/policy.yaml`.
+    """
+    override = os.environ.get("BROOMVA_P9_POLICY")
+    if override:
+        return Path(override)
+    cur = Path.cwd().resolve()
+    for parent in [cur, *cur.parents]:
+        p = parent / ".control" / "policy.yaml"
+        if p.exists():
+            return p
+    return cur / ".control" / "policy.yaml"  # fail-closed marker
+
+
+def rubric_md_path() -> Path:
+    """Locate references/scoring-rubric.md alongside this script."""
+    return Path(__file__).resolve().parent.parent / "references" / "scoring-rubric.md"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Repo identity (BRO-1988)
+#
+# A PR is identified by the composite ``(repo, pr_number)``. Keying on the
+# bare number let a foreign repo's PR consume the concurrency slot AND shadow
+# another repo's lifecycle state (`p9 merge-ready 256` read Acme/Repo#256
+# = ABANDONED for a freshly-green broomva/workspace#256, wedging
+# watch → merge-ready → auto-merge). Everything below exists so that ONE
+# resolution answer is used for both the write key and the read key inside a
+# single invocation — a mismatch silently creates orphan state.
+# ─────────────────────────────────────────────────────────────────────────────
+# `scheme://[user@]host[:port]/` and the scp-like `user@host:` git shorthand.
+_REPO_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://")
+_REPO_SCP_RE = re.compile(r"^[^/@]+@[^/:]+:")
+# Schemes whose "path" is a filesystem location, not an owner/name.
+_REPO_LOCAL_SCHEMES = frozenset({"file"})
+# GitHub web-URL tails that follow OWNER/REPO and may safely be dropped.
+_REPO_URL_TAILS = frozenset({
+    "pull", "pulls", "tree", "blob", "issues", "commit", "commits",
+    "compare", "actions", "releases", "wiki", "branches",
+})
+
+
+def canonical_repo(raw: str | None) -> str:
+    """Normalize any spelling of a repo to ``owner/name``. "" when it does not
+    reduce to a path at all.
+
+    Accepts what the CLI, ``gh``, and ``git remote`` actually hand us:
+    ``owner/name``, ``https://host/owner/name(.git)``,
+    ``git@host:owner/name.git``, ``ssh://git@host/owner/name.git``, trailing
+    slashes, stray whitespace.
+
+    The **host is stripped, not keyed on** — deliberately. ``gh --repo`` takes
+    a bare ``OWNER/REPO`` and gets its host from ``GH_HOST``/config, so within
+    one state store the host is fixed; keying on it would mean ``--repo o/r``
+    and the same repo discovered via ``git remote`` (a full URL) hashed to two
+    different keys, which is the exact stranding this module exists to stop.
+    Host parsing is generic rather than a github.com allowlist: an allowlist
+    made every repo on a GHE/GitLab host collapse to one key (``https:/host``),
+    recreating BRO-1988 host-wide.
+
+    Return shape, exactly:
+      * ``owner/name`` plus a recognized GitHub URL tail (``/pull/5``,
+        ``/tree/main``, …) → ``owner/name``. Only *known* tails are dropped.
+      * 2 segments → those two.
+      * >2 segments with no recognized tail → **all** of them, unchanged.
+        Truncating would fold nested namespaces together
+        (``group/sub/repo`` and ``group/sub/other`` both → ``group/sub``),
+        which is the same collapse this function exists to prevent. Such a
+        value is not a GitHub ``OWNER/REPO``, so it will fail loudly at
+        ``gh --repo`` rather than silently targeting the wrong repo.
+      * exactly 1 segment → that segment, intact. Not ``owner/name``, but
+        collapsing it to "" would alias it onto the legacy no-repo key.
+      * ``file://`` URLs and 0-segment inputs (``https://github.com/``, ``/``,
+        ``//``, whitespace) → "". A local-path remote names no GitHub repo,
+        and ``file:///Users/x/repos/A`` must not become ``Users/x`` and get
+        handed to ``gh --repo``. Callers that need a usable repo check the
+        result (see :func:`resolve_repo`, which warns).
+    """
+    if not raw:
+        return ""
+    s = str(raw).strip()
+    if not s:
+        return ""
+    m = _REPO_SCHEME_RE.match(s)
+    if m:
+        scheme = s[:m.end() - 3].lower()
+        if scheme in _REPO_LOCAL_SCHEMES:
+            return ""  # a filesystem path is not a repo identity
+        # Drop scheme, then the authority ([user@]host[:port]) up to the path.
+        _, _, s = s[m.end():].partition("/")
+    elif _REPO_SCP_RE.match(s):
+        s = s.split(":", 1)[1]
+    s = s.strip().strip("/")
+    if s.lower().endswith(".git"):
+        s = s[:-4]
+    parts = [p for p in s.split("/") if p]
+    if len(parts) > 2 and parts[2].lower() in _REPO_URL_TAILS:
+        parts = parts[:2]
+    return "/".join(parts)
+
+
+def repo_key(raw: str | None) -> str:
+    """The comparison key for ``(repo, pr)`` identity.
+
+    Case-folded because GitHub owner/name are case-insensitive: a row written
+    as ``Acme/Repo`` and a lookup for ``acme/repo`` are the same
+    logical repo, and treating them as different would strand state under a
+    key nothing reads. Unresolvable/absent repo folds to "" (the legacy key).
+    """
+    return canonical_repo(raw).casefold()
+
+
+# Process-lifetime memo for the *detected* (not env/flag-supplied) repo, so a
+# single invocation can never resolve two different answers — and so we shell
+# out to gh/git at most once per process.
+_DETECTED_REPO: str | None = None
+
+
+def _detect_repo_uncached() -> str:
+    """Ask the environment which repo we're in. "" when undeterminable.
+
+    ``gh`` first (it knows the real ``nameWithOwner``, including renames),
+    then ``git remote`` — the fallback matters on CI runners and any box
+    where ``gh`` is absent or unauthenticated.
+    """
+    try:
+        out = subprocess.run(
+            ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        if out.returncode == 0:
+            repo = canonical_repo(out.stdout)
+            if repo:
+                return repo
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    for remote in ("origin", "upstream"):
+        try:
+            out = subprocess.run(
+                ["git", "remote", "get-url", remote],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+            if out.returncode == 0:
+                repo = canonical_repo(out.stdout)
+                if repo:
+                    return repo
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    return ""
+
+
+# `BROOMVA_P9_REPO=-` means "explicitly no repo" — the deliberate pin used by
+# tests and by any caller that must NOT fall through to cwd detection. An
+# *empty* value means unset (the shell convention), so a wrapper doing
+# `export BROOMVA_P9_REPO=$(cmd_that_failed)` degrades to normal detection
+# instead of silently reverting to repo-less state.
+REPO_NONE_SENTINEL = "-"
+
+_WARNED_REPOS: set[tuple[str, str]] = set()
+
+
+def _warn_unusable_repo(source: str, value: str) -> None:
+    """One stderr notice per (source, value). Silence here is how a garbage
+    repo string becomes an invisible slide into repo-less state."""
+    if (source, value) in _WARNED_REPOS:
+        return
+    _WARNED_REPOS.add((source, value))
+    print(f"p9: {source}={value!r} does not reduce to OWNER/REPO; "
+          f"continuing without a repo (state will use the legacy no-repo key)",
+          file=sys.stderr)
+
+
+def resolve_repo(explicit: str | None = None, *, probe: bool = True) -> str:
+    """Resolve the repo half of ``(repo, pr)`` identity. "" when unknown.
+
+    Precedence — deterministic and testable end to end:
+      1. ``explicit`` (the ``--repo`` flag). Never overridden by detection —
+         an explicit target must never silently become a *different* repo.
+      2. ``BROOMVA_P9_REPO`` env. ``-`` pins "no repo"; empty means unset.
+      3. ``gh repo view`` / ``git remote get-url`` from cwd, memoized.
+
+    ``probe=False`` returns only what is knowable **for free** — env, or a
+    detection this process already paid for — and never spawns a subprocess.
+    No read path resolves a repo at all today (state rows are read exactly as
+    written), so this exists for callers that want a best-effort answer
+    without paying for a ``gh repo view`` network round-trip.
+    """
+    if explicit is not None and str(explicit).strip():
+        raw = str(explicit).strip()
+        repo = canonical_repo(raw)
+        if not repo:
+            _warn_unusable_repo("--repo", raw)
+        return repo
+    env = (os.environ.get("BROOMVA_P9_REPO") or "").strip()
+    if env == REPO_NONE_SENTINEL:
+        return ""
+    if env:
+        repo = canonical_repo(env)
+        if not repo:
+            _warn_unusable_repo("BROOMVA_P9_REPO", env)
+        return repo
+    global _DETECTED_REPO
+    if not probe:
+        return _DETECTED_REPO or ""
+    if _DETECTED_REPO is None:
+        _DETECTED_REPO = _detect_repo_uncached()
+    return _DETECTED_REPO
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Errors
+# ─────────────────────────────────────────────────────────────────────────────
+class P9Error(Exception):
+    """Base exception with an exit code."""
+    code = EXIT_DEGRADED
+
+
+class PolicyError(P9Error):
+    code = EXIT_POLICY_ERROR
+
+
+class IllegalTransitionError(P9Error):
+    code = EXIT_INVARIANT_VIOLATION
+
+
+class ConcurrencyCeilingError(P9Error):
+    code = EXIT_CONCURRENCY_CEILING
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# State machine
+# ─────────────────────────────────────────────────────────────────────────────
+class PRState(str, enum.Enum):
+    PUSHED = "PUSHED"
+    WATCHING = "WATCHING"
+    GREEN = "GREEN"
+    RED_CLASSIFIED = "RED_CLASSIFIED"
+    RED_UNCLASSIFIED = "RED_UNCLASSIFIED"
+    HEALING = "HEALING"
+    MERGE_READY = "MERGE_READY"
+    MERGED = "MERGED"
+    ESCALATED = "ESCALATED"
+    ABANDONED = "ABANDONED"
+
+
+# Allowed (from -> to) transitions. All edges in spec §5.1.
+_TRANSITIONS: set[tuple[PRState, PRState]] = {
+    (PRState.PUSHED, PRState.WATCHING),
+    (PRState.WATCHING, PRState.GREEN),
+    (PRState.WATCHING, PRState.RED_CLASSIFIED),
+    (PRState.WATCHING, PRState.RED_UNCLASSIFIED),
+    (PRState.RED_CLASSIFIED, PRState.HEALING),
+    (PRState.RED_CLASSIFIED, PRState.ESCALATED),  # evaluator-stalled
+    (PRState.HEALING, PRState.WATCHING),          # heal pushed; new watch cycle
+    (PRState.HEALING, PRState.ESCALATED),         # heal corruption / scope violation
+    (PRState.RED_UNCLASSIFIED, PRState.ESCALATED),
+    (PRState.GREEN, PRState.MERGE_READY),
+    (PRState.MERGE_READY, PRState.MERGED),
+    (PRState.MERGE_READY, PRState.WATCHING),       # rare: human pushed amend post-green
+    # A foreground slice ended with CI still running (BRO-2815): the watch
+    # hands the PR back to PUSHED, whose next action is to watch again.
+    (PRState.WATCHING, PRState.PUSHED),
+    # Terminal "abandoned" reachable from any non-terminal — needed for
+    # `p9 abandon` and `p9 cleanup` to drain orphans regardless of the
+    # state they're parked in.
+    (PRState.PUSHED, PRState.ABANDONED),
+    (PRState.WATCHING, PRState.ABANDONED),
+    (PRState.HEALING, PRState.ABANDONED),
+    (PRState.RED_CLASSIFIED, PRState.ABANDONED),
+    (PRState.RED_UNCLASSIFIED, PRState.ABANDONED),
+    (PRState.GREEN, PRState.ABANDONED),
+    (PRState.MERGE_READY, PRState.ABANDONED),
+}
+
+
+def assert_legal_transition(curr: PRState, nxt: PRState) -> None:
+    if curr == nxt:
+        return  # idempotent self-event allowed (e.g., status refresh)
+    if (curr, nxt) not in _TRANSITIONS:
+        raise IllegalTransitionError(
+            f"Illegal PR state transition: {curr.value} -> {nxt.value}"
+        )
+
+
+def is_terminal(state: PRState) -> bool:
+    return state in {PRState.MERGED, PRState.ESCALATED, PRState.ABANDONED}
+
+
+# BRO-2305. What the concurrency ceiling counts over — deliberately NOT
+# `is_terminal`. The ceiling bounds *watcher work in flight*, not *open PRs*.
+#
+# A row parked in GREEN or MERGE_READY has no live watcher process and no
+# transition p9 itself can make: it is waiting on something outside p9 — the
+# merge gate, a reviewer, a policy class that does not match. Counting those
+# meant one PR that went green and did not merge pinned the slot forever, and
+# since `watch` is the only transition into GREEN, the whole lifecycle became
+# unreachable for that repo. That is the identical failure BRO-1988 fixed on
+# the repo axis, reappearing on the state axis, and its rationale applies
+# verbatim: an unreachable lifecycle is a worse failure than one extra
+# concurrent watcher.
+#
+# The red states are deliberately NOT exempt, and the distinction is the whole
+# design. GREEN/MERGE_READY mean *success awaiting an external gate*;
+# RED_CLASSIFIED/RED_UNCLASSIFIED mean *a failure needing attention*. Holding
+# the slot on red is intentional back-pressure — do not start watching new
+# work while something is broken — and `TestRewatchCeiling::
+# test_distinct_pr_still_blocked_at_ceiling` pins exactly that.
+#
+# Kept separate from `is_terminal` on purpose: `open_prs`, `cleanup`, `reap`,
+# `status` and the governor all consume that predicate, and widening it would
+# change all of them together. This one has exactly one caller.
+_CEILING_EXEMPT: frozenset[PRState] = frozenset({
+    PRState.GREEN,
+    PRState.MERGE_READY,
+})
+
+
+def counts_against_ceiling(state: PRState) -> bool:
+    """Does a row in ``state`` occupy a concurrency slot?
+
+    True for states where p9 still has work to do or a failure to answer for
+    — PUSHED, WATCHING, HEALING, RED_CLASSIFIED, RED_UNCLASSIFIED. False for
+    terminals, and for the parked states in ``_CEILING_EXEMPT`` where p9 has
+    concluded *successfully* and an external actor must move first.
+    """
+    return not is_terminal(state) and state not in _CEILING_EXEMPT
+
+
+class WaitState(str, enum.Enum):
+    """States for generic (non-PR) waits — `p9 wait-for` (BRO-1701).
+
+    A deliberately separate, flat machine: WAITING is the only live state;
+    everything else is terminal. Kept out of PRState so state.jsonl
+    consumers (open_prs, status, the governor) never see an unknown value.
+    """
+    WAITING = "WAITING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"          # command not runnable (exit 126/127 first poll)
+    TIMED_OUT = "TIMED_OUT"
+    KILLED = "KILLED"          # signal-terminated; report already emitted
+    ABANDONED = "ABANDONED"    # dead pid reconciled by reap/rearm
+
+
+def wait_is_terminal(state: WaitState) -> bool:
+    return state is not WaitState.WAITING
+
+
+class _WaitInterrupted(BaseException):
+    """Raised by the signal handlers installed around foreground waits
+    (`p9 watch`, `p9 wait-for`). BaseException on purpose: a broad
+    `except Exception` inside a poll loop must not swallow a kill."""
+
+    def __init__(self, signum: int):
+        super().__init__(f"interrupted by signal {signum}")
+        self.signum = signum
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dataclasses
+# ─────────────────────────────────────────────────────────────────────────────
+@dataclass(frozen=True)
+class IsolationTierMap:
+    research: str = "none"
+    docs: str = "none"
+    code_independent: str = "worktree"
+    code_dependent: str = "stacked_branch"
+    governance: str = "blocked"
+
+
+CEILING_SCOPES = ("repo", "global")
+
+
+@dataclass(frozen=True)
+class CIWatchPolicy:
+    enabled: bool = True
+    max_concurrent_prs: int = 1
+    # BRO-1988. What `max_concurrent_prs` counts over — an explicit setpoint,
+    # because changing it implicitly would be a governance-class change to a
+    # control-metalayer knob.
+    #
+    #   "repo"   (default) — count in-flight PRs per (session, repo). Chosen
+    #            because a global count let an in-flight PR in one repo refuse
+    #            `p9 watch` in an unrelated repo, and since `watch` is the only
+    #            transition into GREEN that made the whole lifecycle
+    #            unreachable there.
+    #   "global" — the pre-BRO-1988 cross-repo count: one session drives one
+    #            bounded merge train across every repo. This is what the design
+    #            spec (docs/superpowers/specs/2026-05-04-p9-ci-watcher-design.md
+    #            §3 L7 "bounded merge train", §5.4, §6.6 "workspace-wide")
+    #            describes; set it if you want the defer-into-wait-queue
+    #            discipline to fire across repos too. Spec reconciliation is
+    #            tracked separately.
+    max_concurrent_prs_scope: str = "repo"
+    isolation_tier_map: IsolationTierMap = field(default_factory=IsolationTierMap)
+
+
+@dataclass(frozen=True)
+class EscalationChannel:
+    linear_team: str = "BRO"
+    linear_label: str = "ci-heal-escalation"
+    notify_hook: str = "skills/p9/scripts/p9-escalate-notify.sh"
+
+
+@dataclass(frozen=True)
+class CIHealPolicy:
+    enabled: bool = True
+    max_attempts: int = 5
+    stability_floor: float = 0.3
+    classified_failure_types: tuple[str, ...] = (
+        "lint", "format", "test_flaky", "codegen_drift", "import_missing",
+    )
+    escalation_channel: EscalationChannel = field(default_factory=EscalationChannel)
+
+
+@dataclass(frozen=True)
+class AutoMergeRule:
+    """One auto-merge rule. Either branch_pattern or path_touched (not both).
+
+    branch_pattern: fnmatch glob against the PR's head branch (e.g. "docs/*").
+    path_touched:   substring match against any file in the PR diff
+                    (e.g. "CLAUDE.md" matches the literal path).
+    action:         "auto" → run gh pr merge; "require_human" → hard-block,
+                    exit 7; "notify" → emit MERGE_NOTIFIED event, exit 7.
+
+    Rules are evaluated in declaration order; first match wins.
+    Matches are short-circuited: `require_human` and `notify` are blocking
+    states even if a later rule would auto-merge.
+    """
+    branch_pattern: str | None = None
+    path_touched: str | None = None
+    action: str = "notify"
+
+
+# Gated auto-merge (BRO-2591). The prefix allowlist answered "which branches
+# may merge?"; the gates answer "is THIS PR safe to merge?" for any branch.
+# Only thresholds and lists are configurable. The gates themselves are always
+# on, and the parser refuses any value looser than the P20 definition
+# (>=7/10; >200 LOC or multi-file), so no YAML edit can switch a gate off.
+_P20_PASS_FLOOR = 7
+_P20_MAX_LOC_CEILING = 200
+_P20_MAX_FILES_CEILING = 1
+_P20_STRATA = ("A", "B", "C")
+_DEFAULT_REVIEW_BOTS = ("coderabbitai", "CodeRabbit",
+                        "copilot-pull-request-reviewer")
+_DEFAULT_GOVERNANCE_PATHS = ("CLAUDE.md", "AGENTS.md", "METALAYER.md",
+                             ".control/policy.yaml",
+                             ".control/rcs-parameters.toml")
+# Paths whose change always needs P20, whatever its size: the definitions a PR
+# could otherwise rewrite for itself. A `pull_request` run executes the PR's OWN
+# workflow files, so a one-line edit to the aggregate check passes itself.
+_ALWAYS_REVIEW_PATHS = (".github/workflows/**", ".githooks/**",
+                        ".claude/**", ".mcp.json", ".control/preauth.yaml")
+# Checks that aggregate other checks. An aggregate passes vacuously when no
+# other check ran, so it cannot be the only thing that vouches for a PR.
+_DEFAULT_AGGREGATE_CHECKS = ("Merge Gate",)
+
+
+@dataclass(frozen=True)
+class P20Requirement:
+    """When a PR needs a recorded P20 pass, and what counts as one."""
+    pass_score: int = _P20_PASS_FLOOR
+    max_loc: int = _P20_MAX_LOC_CEILING      # additions+deletions ABOVE this need P20
+    max_files: int = _P20_MAX_FILES_CEILING  # changed files ABOVE this need P20
+    public_api_paths: tuple[str, ...] = _ALWAYS_REVIEW_PATHS  # any match needs P20
+
+
+@dataclass(frozen=True)
+class GovernanceTier:
+    """The stricter gate for L3 paths, in place of a human click."""
+    paths: tuple[str, ...] = _DEFAULT_GOVERNANCE_PATHS
+    required_strata: tuple[str, ...] = _P20_STRATA
+    required_checks: tuple[str, ...] = ("stability-check",)
+    l3_max_per_window: int = 1
+    l3_window_seconds: int = 86400
+
+
+@dataclass(frozen=True)
+class MergeGates:
+    review_bots: tuple[str, ...] = _DEFAULT_REVIEW_BOTS
+    aggregate_checks: tuple[str, ...] = _DEFAULT_AGGREGATE_CHECKS
+    p20: P20Requirement = field(default_factory=P20Requirement)
+    governance: GovernanceTier = field(default_factory=GovernanceTier)
+
+
+@dataclass(frozen=True)
+class AutoMergePolicy:
+    enabled: bool = False
+    require_no_requested_changes: bool = True
+    require_branch_up_to_date: bool = True
+    merge_method: str = "squash"          # squash | merge | rebase
+    delete_branch: bool = True
+    rules: tuple[AutoMergeRule, ...] = ()
+    default_action: str = "notify"        # fail-safe default
+    # None → legacy prefix-rule matcher. Set → every PR is judged by the gates,
+    # and `rules` may only block (require_human / notify), never allow.
+    gates: MergeGates | None = None
+
+
+@dataclass(frozen=True)
+class PolicyConfig:
+    ci_watch: CIWatchPolicy
+    ci_heal: CIHealPolicy
+    auto_merge: AutoMergePolicy = field(default_factory=AutoMergePolicy)
+
+
+@dataclass
+class PRStateEvent:
+    """One row of state.jsonl."""
+    ts: str
+    pr: int
+    repo: str
+    from_state: str
+    to_state: str
+    watcher_id: str
+    attempt: int = 0
+    evaluator_score: float | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
+    # Scope key (current_session_id). Default "" so old rows and positional
+    # callers stay valid; "" means "unscoped / legacy global".
+    session_id: str = ""
+
+    def to_jsonl(self) -> str:
+        return json.dumps(dataclasses.asdict(self), separators=(",", ":"))
+
+
+@dataclass
+class WaitEvent:
+    """One row of waits.jsonl (generic non-PR waits)."""
+    ts: str
+    wait_id: str
+    name: str
+    from_state: str
+    to_state: str
+    session_id: str = ""
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    def to_jsonl(self) -> str:
+        return json.dumps(dataclasses.asdict(self), separators=(",", ":"))
+
+
+@dataclass(frozen=True)
+class ClassifierResult:
+    failure_type: str
+    classified: bool
+    confidence: float
+    heal_command: str | None
+    signature_hash: str
+    rationale: str
+
+
+@dataclass(frozen=True)
+class EvaluatorResult:
+    progress_score: float
+    signature_changed: bool
+    failures_decreased: bool
+    budget_remaining: float
+    classifier_confidence: float
+    stalled: bool
+
+
+_QUEUE_PRIORITY = ("session", "memory", "graph", "docs", "linear")
+
+
+@dataclass
+class WaitQueueItem:
+    """One row of wait-queue.jsonl."""
+    id: str
+    source: str
+    item: str
+    created_at: str
+    pr: int | None = None
+    isolation_tier: str = "none"
+    # Scope key + originating repo. Defaults keep old rows / positional
+    # callers valid; "" session_id means "unscoped / legacy global".
+    session_id: str = ""
+    repo: str = ""
+
+    def to_jsonl(self) -> str:
+        return json.dumps(dataclasses.asdict(self), separators=(",", ":"))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Filesystem helpers — JSONL append, locks, corruption recovery
+# ─────────────────────────────────────────────────────────────────────────────
+@contextlib.contextmanager
+def file_lock(lock_path: Path, timeout_s: float = 30.0) -> Iterator[None]:
+    """Cross-process flock with timeout. Creates lock file if absent."""
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+    deadline = time.monotonic() + timeout_s
+    try:
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as e:
+                if e.errno not in (errno.EAGAIN, errno.EACCES):
+                    raise
+                if time.monotonic() >= deadline:
+                    raise P9Error(
+                        f"flock timeout after {timeout_s}s on {lock_path}"
+                    ) from e
+                time.sleep(0.05)
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def jsonl_append(path: Path, payload: str, lock: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with file_lock(lock):
+        with path.open("a", encoding="utf-8") as f:
+            f.write(payload)
+            if not payload.endswith("\n"):
+                f.write("\n")
+
+
+def jsonl_read_all(path: Path) -> tuple[list[dict[str, Any]], int]:
+    """Read JSONL, skipping the last line if it's a partial/corrupt write.
+
+    Returns (rows, dropped) where dropped is the number of lines we skipped
+    (currently 0 or 1).
+    """
+    if not path.exists():
+        return [], 0
+    raw = path.read_text(encoding="utf-8")
+    if not raw:
+        return [], 0
+    lines = raw.splitlines()
+    rows: list[dict[str, Any]] = []
+    dropped = 0
+    for i, line in enumerate(lines):
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            # JSONL append-only design: only the last line can be partial.
+            # If the corrupt line is not the last, that's an invariant violation.
+            if i == len(lines) - 1:
+                dropped = 1
+            else:
+                raise IllegalTransitionError(
+                    f"Mid-file JSON corruption in {path} at line {i + 1}"
+                )
+    return rows, dropped
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Policy loader (strict; fail-closed)
+# ─────────────────────────────────────────────────────────────────────────────
+def _yaml_loader():
+    """Lazy-import PyYAML; fall back to a tiny parser for the keys we need."""
+    try:
+        import yaml  # type: ignore
+        return yaml.safe_load
+    except ImportError:
+        return _minimal_yaml_load
+
+
+def _minimal_yaml_load(text: str) -> dict[str, Any]:
+    """Tiny YAML subset: top-level mappings, nested mappings, scalars,
+    inline lists `[a,b]`, and block-style list-of-dicts `- key: val`.
+
+    Sufficient for `.control/policy.yaml` ci_watch / ci_heal / auto_merge
+    blocks. Not a general YAML parser — intentionally narrow so it fails
+    noisily on anything unexpected.
+    """
+    out: dict[str, Any] = {}
+    # stack tracks (indent, dict) frames for nested mappings.
+    stack: list[tuple[int, dict[str, Any]]] = [(-1, out)]
+    # list_stack tracks (indent, list) frames for active block lists.
+    list_stack: list[tuple[int, list[Any]]] = []
+
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        if not line or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        body = line.strip()
+
+        if body.startswith("- "):
+            # block list item; pop deeper frames first
+            while list_stack and list_stack[-1][0] >= indent:
+                list_stack.pop()
+            while stack and stack[-1][0] >= indent:
+                stack.pop()
+            if not list_stack:
+                continue  # orphan list item — ignore
+            target_list = list_stack[-1][1]
+            inner = body[2:].strip()
+            if ":" in inner and not (inner.startswith("[") or inner.startswith('"')):
+                # block-style list-of-dicts: `- key: val` starts a new dict
+                # and any subsequent more-indented `key: val` lines populate it
+                key, _, value_str = inner.partition(":")
+                value_str = value_str.strip()
+                new_dict: dict[str, Any] = {}
+                if value_str:
+                    new_dict[key.strip()] = _scalar(value_str)
+                target_list.append(new_dict)
+                # Subsequent same-indent `- ` items pop this frame; nested
+                # `key: val` lines at deeper indent populate new_dict.
+                stack.append((indent, new_dict))
+            else:
+                # scalar list item
+                target_list.append(_scalar(inner))
+            continue
+
+        if ":" not in body:
+            continue
+        key, _, value_str = body.partition(":")
+        value_str = value_str.strip()
+        # Pop deeper frames
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        while list_stack and list_stack[-1][0] >= indent:
+            list_stack.pop()
+        parent = stack[-1][1] if stack else out
+
+        if value_str == "":
+            # Mapping or list — we don't know yet. Default to mapping;
+            # if the next non-blank line is a `- `, the open list_stack
+            # frame below catches it.
+            new_map: dict[str, Any] = {}
+            new_list: list[Any] = []
+            parent[key.strip()] = new_map
+            stack.append((indent, new_map))
+            # Tentatively register a list at deeper indent; whichever
+            # the next line uses (mapping vs list) wins via stack pop.
+            # We need a sentinel: register the list only if the next
+            # `-` arrives at deeper indent. Easiest: pre-register both
+            # but only commit to one once content arrives.
+            # Concretely: replace mapping with list lazily on first `-`.
+            list_stack.append((indent, new_list))
+            # If the next content is a `- ` deeper than `indent`, we'll
+            # convert: replace parent[key] with new_list and pop the dict.
+            stack[-1] = (indent, new_map)
+            # Stash a reference so a `- ` line can swap mapping → list
+            new_map.setdefault("__p9_yaml_pending_list_holder__",
+                               (parent, key.strip(), new_list))
+        elif value_str.startswith("[") and value_str.endswith("]"):
+            inner = value_str[1:-1].strip()
+            parent[key.strip()] = (
+                [_scalar(p.strip()) for p in inner.split(",") if p.strip()]
+                if inner else []
+            )
+        else:
+            parent[key.strip()] = _scalar(value_str)
+
+    # Second pass: any dict that still holds the pending-list sentinel
+    # AND has no other keys is actually an empty dict; any dict whose
+    # corresponding list got populated had its mapping replaced.
+    _resolve_pending_lists(out)
+    return out
+
+
+def _resolve_pending_lists(node: Any) -> None:
+    """Walk the parsed tree; convert mapping→list where a `-` block was
+    used. Sentinel removal must come before semantic validation."""
+    if isinstance(node, dict):
+        sentinel_key = "__p9_yaml_pending_list_holder__"
+        if sentinel_key in node:
+            holder = node[sentinel_key]
+            del node[sentinel_key]
+            parent, key, the_list = holder
+            if the_list:
+                # `-` lines populated the list; replace mapping with list
+                parent[key] = the_list
+        for v in list(node.values()):
+            _resolve_pending_lists(v)
+    elif isinstance(node, list):
+        for item in node:
+            _resolve_pending_lists(item)
+
+
+def _scalar(s: str) -> Any:
+    s = s.strip()
+    # A quoted scalar is a string, as in PyYAML: "false" must not become the
+    # boolean False here while PyYAML reads the string "false", or one policy
+    # would parse differently depending on whether PyYAML is installed.
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in "\"'":
+        return s[1:-1]
+    if s.lower() == "true":
+        return True
+    if s.lower() == "false":
+        return False
+    if s.lower() in ("null", "none", "~"):
+        return None
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    return s
+
+
+def load_policy(path: Path | str | None = None, *,
+                validate_auto_merge: bool = True) -> PolicyConfig:
+    """Load .control/policy.yaml. **Fail-closed** on missing/malformed blocks.
+
+    Accepts both `Path` and `str` (str is coerced — historic callers were
+    inconsistent). None falls back to `policy_yaml_path()`.
+
+    ``validate_auto_merge=False`` is for paths that never act on auto_merge
+    (watch, notify). There an auto_merge block p9 cannot parse — another
+    repo's keys, or a malformed one — warns and loads as disabled instead of
+    killing the command (BRO-2957). The merge paths keep the default.
+    """
+    p = Path(path) if path is not None else policy_yaml_path()
+    if not p.exists():
+        raise PolicyError(f"policy.yaml not found at {p}")
+    return load_policy_text(p.read_text(encoding="utf-8"),
+                            validate_auto_merge=validate_auto_merge)
+
+
+def load_policy_text(text: str, *, validate_auto_merge: bool = True) -> PolicyConfig:
+    """Parse policy YAML text with the same fail-closed checks as a file load,
+    ``validate_auto_merge`` included. Used to judge a PR by its BASE branch's
+    policy (BRO-2591), which always validates."""
+    try:
+        loader = _yaml_loader()
+        data = loader(text)
+    except Exception as e:
+        raise PolicyError(f"policy.yaml malformed: {e}") from e
+    if not isinstance(data, dict):
+        raise PolicyError("policy.yaml must be a mapping at the top level")
+    if "ci_watch" not in data:
+        raise PolicyError("policy.yaml missing required block: ci_watch")
+    if "ci_heal" not in data:
+        raise PolicyError("policy.yaml missing required block: ci_heal")
+    return _parse_policy(data, validate_auto_merge=validate_auto_merge)
+
+
+def _parse_policy(data: dict[str, Any], *,
+                  validate_auto_merge: bool = True) -> PolicyConfig:
+    cw_raw = data.get("ci_watch") or {}
+    ch_raw = data.get("ci_heal") or {}
+    iso_raw = cw_raw.get("isolation_tier_map") or {}
+    esc_raw = ch_raw.get("escalation_channel") or {}
+    types_raw = ch_raw.get("classified_failure_types") or ()
+    if not isinstance(types_raw, (list, tuple)):
+        raise PolicyError("ci_heal.classified_failure_types must be a list")
+    scope = str(cw_raw.get("max_concurrent_prs_scope", "repo"))
+    if scope not in CEILING_SCOPES:
+        raise PolicyError(
+            f"ci_watch.max_concurrent_prs_scope must be one of {CEILING_SCOPES}, "
+            f"got {scope!r}"
+        )
+    return PolicyConfig(
+        ci_watch=CIWatchPolicy(
+            enabled=_bool(cw_raw.get("enabled", True), "ci_watch.enabled"),
+            max_concurrent_prs=int(cw_raw.get("max_concurrent_prs", 1)),
+            max_concurrent_prs_scope=scope,
+            isolation_tier_map=IsolationTierMap(
+                research=str(iso_raw.get("research", "none")),
+                docs=str(iso_raw.get("docs", "none")),
+                code_independent=str(iso_raw.get("code_independent", "worktree")),
+                code_dependent=str(iso_raw.get("code_dependent", "stacked_branch")),
+                governance=str(iso_raw.get("governance", "blocked")),
+            ),
+        ),
+        ci_heal=CIHealPolicy(
+            enabled=_bool(ch_raw.get("enabled", True), "ci_heal.enabled"),
+            max_attempts=int(ch_raw.get("max_attempts", 5)),
+            stability_floor=float(ch_raw.get("stability_floor", 0.3)),
+            classified_failure_types=tuple(str(t) for t in types_raw),
+            escalation_channel=EscalationChannel(
+                linear_team=str(esc_raw.get("linear_team", "BRO")),
+                linear_label=str(esc_raw.get("linear_label", "ci-heal-escalation")),
+                notify_hook=str(
+                    esc_raw.get(
+                        "notify_hook",
+                        "skills/p9/scripts/p9-escalate-notify.sh",
+                    )
+                ),
+            ),
+        ),
+        auto_merge=_auto_merge_for(data.get("auto_merge"), validate_auto_merge),
+    )
+
+
+def _auto_merge_for(raw: Any, validate: bool) -> AutoMergePolicy:
+    if validate:
+        return _parse_auto_merge(raw)
+    # A read-only path: the block is not ours to enforce here, so a rejection
+    # becomes a warning and the block loads as disabled. Nothing merges on it,
+    # and the merge paths still re-parse it strictly.
+    try:
+        return _parse_auto_merge(raw)
+    except PolicyError as e:
+        print(f"p9: warning: ignoring auto_merge on a read-only path "
+              f"(auto-merge would refuse it): {e}", file=sys.stderr)
+        return AutoMergePolicy()
+
+
+_AUTO_MERGE_ACTIONS = ("auto", "require_human", "notify")
+
+
+def _parse_auto_merge(raw: Any) -> AutoMergePolicy:
+    """Parse the optional auto_merge: block. Absence is *not* an error —
+    auto-merge is opt-in; missing block defaults to disabled (fail-safe)."""
+    if raw is None:
+        return AutoMergePolicy()
+    if not isinstance(raw, dict):
+        raise PolicyError("auto_merge must be a mapping if present")
+    _only_keys(raw, {"enabled", "require_no_requested_changes",
+                     "require_branch_up_to_date", "merge_method", "delete_branch",
+                     "rules", "default_action", "gates"}, "auto_merge")
+    rules_raw = raw.get("rules") or []
+    if not isinstance(rules_raw, list):
+        raise PolicyError("auto_merge.rules must be a list")
+    rules: list[AutoMergeRule] = []
+    for i, r in enumerate(rules_raw):
+        if not isinstance(r, dict):
+            raise PolicyError(f"auto_merge.rules[{i}] must be a mapping")
+        action = str(r.get("action", "notify"))
+        if action not in _AUTO_MERGE_ACTIONS:
+            raise PolicyError(
+                f"auto_merge.rules[{i}].action must be one of {_AUTO_MERGE_ACTIONS}, "
+                f"got {action!r}"
+            )
+        bp = r.get("branch_pattern")
+        pt = r.get("path_touched")
+        if bp and pt:
+            raise PolicyError(
+                f"auto_merge.rules[{i}] cannot set both branch_pattern and path_touched"
+            )
+        if not bp and not pt:
+            raise PolicyError(
+                f"auto_merge.rules[{i}] must set either branch_pattern or path_touched"
+            )
+        rules.append(AutoMergeRule(
+            branch_pattern=str(bp) if bp else None,
+            path_touched=str(pt) if pt else None,
+            action=action,
+        ))
+    default = str(raw.get("default_action", "notify"))
+    if default not in _AUTO_MERGE_ACTIONS:
+        raise PolicyError(
+            f"auto_merge.default_action must be one of {_AUTO_MERGE_ACTIONS}, "
+            f"got {default!r}"
+        )
+    method = str(raw.get("merge_method", "squash"))
+    if method not in ("squash", "merge", "rebase"):
+        raise PolicyError(
+            f"auto_merge.merge_method must be squash|merge|rebase, got {method!r}"
+        )
+    # `gates:` with no value is gated mode with the defaults. PyYAML reads it as
+    # null and the minimal loader as {}, and both must mean the strict thing.
+    gates = _parse_gates({} if "gates" in raw and raw["gates"] is None
+                         else raw.get("gates"))
+    if gates is not None and default != "notify" and default != "require_human":
+        raise PolicyError(
+            "auto_merge.default_action must be notify or require_human when gates "
+            "are set: a p9 that predates gates reads only default_action, and "
+            "`auto` would merge every PR ungated"
+        )
+    if gates is not None:
+        for i, rule in enumerate(rules):
+            if rule.action == "auto":
+                raise PolicyError(
+                    f"auto_merge.rules[{i}] is action=auto, but gates are set: "
+                    f"the gates decide what merges, so a rule may only block "
+                    f"(require_human | notify)"
+                )
+    return AutoMergePolicy(
+        # bool("false") is True: a quoted "false" must not ENABLE auto-merge.
+        enabled=_bool(raw.get("enabled", False), "auto_merge.enabled"),
+        require_no_requested_changes=_bool(raw.get("require_no_requested_changes", True),
+                                           "auto_merge.require_no_requested_changes"),
+        require_branch_up_to_date=_bool(raw.get("require_branch_up_to_date", True),
+                                        "auto_merge.require_branch_up_to_date"),
+        merge_method=method,
+        delete_branch=_bool(raw.get("delete_branch", True), "auto_merge.delete_branch"),
+        rules=tuple(rules),
+        default_action=default,
+        gates=gates,
+    )
+
+
+def _bool(raw: Any, where: str) -> bool:
+    if not isinstance(raw, bool):
+        raise PolicyError(f"{where} must be true or false, got {raw!r}")
+    return raw
+
+
+def _str_tuple(raw: Any, where: str) -> tuple[str, ...]:
+    if raw is None:
+        raise PolicyError(f"{where} must be a list")
+    if not isinstance(raw, list) or not all(isinstance(x, str) and x for x in raw):
+        raise PolicyError(f"{where} must be a list of non-empty strings")
+    return tuple(raw)
+
+
+def _int_in(raw: Any, where: str, lo: int, hi: int) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, int) or not lo <= raw <= hi:
+        raise PolicyError(f"{where} must be an integer in [{lo}, {hi}], got {raw!r}")
+    return raw
+
+
+def _only_keys(raw: dict, allowed: set[str], where: str) -> None:
+    # An unknown key is a typo that would otherwise run on the default, which
+    # is how a gate gets configured without ever being configured.
+    unknown = sorted(set(raw) - allowed)
+    if unknown:
+        raise PolicyError(f"{where} has unknown key(s) {unknown}; allowed: {sorted(allowed)}")
+
+
+def _parse_gates(raw: Any) -> MergeGates | None:
+    """Parse auto_merge.gates. Absent → None (legacy prefix-rule mode)."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise PolicyError("auto_merge.gates must be a mapping")
+    _only_keys(raw, {"review_bots", "aggregate_checks", "p20", "governance"},
+               "auto_merge.gates")
+
+    # Configured bots EXTEND the built-in list: no YAML can make a CodeRabbit
+    # status or review count as a human-grade signal again.
+    extra_bots = (_str_tuple(raw["review_bots"], "auto_merge.gates.review_bots")
+                  if "review_bots" in raw else ())
+    bots = tuple(dict.fromkeys(_DEFAULT_REVIEW_BOTS + extra_bots))
+    extra_agg = (_str_tuple(raw["aggregate_checks"], "auto_merge.gates.aggregate_checks")
+                 if "aggregate_checks" in raw else ())
+    aggregates = tuple(dict.fromkeys(_DEFAULT_AGGREGATE_CHECKS + extra_agg))
+
+    # An absent or empty block means the defaults (the strictest values); a
+    # present block of the wrong type (`p20: []`, `p20: false`) is an error.
+    p20_raw = {} if raw.get("p20") is None else raw["p20"]
+    if not isinstance(p20_raw, dict):
+        raise PolicyError("auto_merge.gates.p20 must be a mapping")
+    _only_keys(p20_raw, {"pass_score", "max_loc", "max_files", "public_api_paths"},
+               "auto_merge.gates.p20")
+    p20 = P20Requirement(
+        pass_score=_int_in(p20_raw.get("pass_score", _P20_PASS_FLOOR),
+                           "auto_merge.gates.p20.pass_score", _P20_PASS_FLOOR, 10),
+        max_loc=_int_in(p20_raw.get("max_loc", _P20_MAX_LOC_CEILING),
+                        "auto_merge.gates.p20.max_loc", 0, _P20_MAX_LOC_CEILING),
+        max_files=_int_in(p20_raw.get("max_files", _P20_MAX_FILES_CEILING),
+                          "auto_merge.gates.p20.max_files", 0, _P20_MAX_FILES_CEILING),
+        # Configured paths EXTEND the always-review floor, never replace it.
+        public_api_paths=tuple(dict.fromkeys(_ALWAYS_REVIEW_PATHS + (
+            _str_tuple(p20_raw["public_api_paths"], "auto_merge.gates.p20.public_api_paths")
+            if "public_api_paths" in p20_raw else ()))),
+    )
+
+    gov_raw = {} if raw.get("governance") is None else raw["governance"]
+    if not isinstance(gov_raw, dict):
+        raise PolicyError("auto_merge.gates.governance must be a mapping")
+    _only_keys(gov_raw, {"paths", "required_strata", "required_checks",
+                         "l3_max_per_window", "l3_window_seconds"},
+               "auto_merge.gates.governance")
+    paths = (_str_tuple(gov_raw["paths"], "auto_merge.gates.governance.paths")
+             if "paths" in gov_raw else _DEFAULT_GOVERNANCE_PATHS)
+    strata = (_str_tuple(gov_raw["required_strata"],
+                         "auto_merge.gates.governance.required_strata")
+              if "required_strata" in gov_raw else _P20_STRATA)
+    checks = (_str_tuple(gov_raw["required_checks"],
+                         "auto_merge.gates.governance.required_checks")
+              if "required_checks" in gov_raw else ("stability-check",))
+    # Floors, not defaults: a policy may ADD governance paths and checks, never
+    # drop one, and may not ask for fewer strata than all three.
+    missing_paths = sorted({d.lower() for d in _DEFAULT_GOVERNANCE_PATHS}
+                           - {x.lower() for x in paths})
+    if missing_paths:
+        raise PolicyError(
+            f"auto_merge.gates.governance.paths may add paths but not drop the "
+            f"L3 set; missing {missing_paths}"
+        )
+    if "stability-check" not in checks:
+        raise PolicyError(
+            "auto_merge.gates.governance.required_checks must include stability-check"
+        )
+    if set(strata) != set(_P20_STRATA):
+        raise PolicyError(
+            f"auto_merge.gates.governance.required_strata must be all of "
+            f"{list(_P20_STRATA)}, got {list(strata)}"
+        )
+    gov = GovernanceTier(
+        paths=paths,
+        required_strata=strata,
+        required_checks=checks,
+        # One governance commit per tau_a3 (>= 1 day) is the L3 budget the RCS
+        # stability argument assumes; the policy may lengthen the window only.
+        l3_max_per_window=_int_in(gov_raw.get("l3_max_per_window", 1),
+                                  "auto_merge.gates.governance.l3_max_per_window", 1, 1),
+        l3_window_seconds=_int_in(gov_raw.get("l3_window_seconds", 86400),
+                                  "auto_merge.gates.governance.l3_window_seconds",
+                                  86400, 30 * 86400),
+    )
+    return MergeGates(review_bots=bots, aggregate_checks=aggregates, p20=p20,
+                      governance=gov)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Auto-merge matcher
+# ─────────────────────────────────────────────────────────────────────────────
+import fnmatch  # noqa: E402  (kept near use site for clarity)
+
+
+def match_auto_merge_action(
+    policy: AutoMergePolicy,
+    *,
+    branch: str,
+    paths_touched: Iterable[str],
+) -> tuple[str, str]:
+    """First-match-wins evaluator. Returns (action, reason).
+
+    Path rules are evaluated FIRST regardless of order — a path-touched
+    `require_human` rule (e.g. CLAUDE.md) is a hard block that cannot be
+    overridden by a later branch rule. This implements the "governance
+    paths always block" invariant from the original brainstorming.
+    """
+    paths = list(paths_touched)
+
+    # Pass 1: any path rule with require_human is a hard block.
+    for rule in policy.rules:
+        if rule.path_touched and rule.action == "require_human":
+            for p in paths:
+                if rule.path_touched.lower() in p.lower():
+                    return ("require_human",
+                            f"path rule blocks: {rule.path_touched!r} in {p}")
+
+    # Pass 2: first match wins (path or branch). A BLOCKING path rule matches
+    # case-folded (a macOS checkout aliases case); an `auto` path rule keeps its
+    # exact substring match, so folding can only ever add a block.
+    for rule in policy.rules:
+        if rule.path_touched:
+            fold = rule.action != "auto"
+            for p in paths:
+                if ((rule.path_touched.lower() in p.lower()) if fold
+                        else (rule.path_touched in p)):
+                    return (rule.action,
+                            f"path rule matched: {rule.path_touched!r} in {p}")
+        if rule.branch_pattern and fnmatch.fnmatch(branch, rule.branch_pattern):
+            return (rule.action, f"branch rule matched: {rule.branch_pattern!r}")
+
+    return (policy.default_action, "no rule matched; using default_action")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gated auto-merge (BRO-2591): any branch merges iff its PR passes the gates
+# ─────────────────────────────────────────────────────────────────────────────
+# The marker a P20 run records on the PR (`p9 p20-record` writes it):
+#   P20-VERDICT: PASS score=8 strata=B,C sha=<40-hex head sha>
+# Only the FIRST line of a comment is a marker, so a note or a quoted ledger
+# below it can never be read as the verdict.
+_P20_MARKER_RE = re.compile(
+    r"P20-VERDICT:[ \t]*(PASS|FAIL|STOP)[ \t]+score=(10|\d)(?:/10)?"
+    r"[ \t]+strata=([ABC](?:,[ABC])*)[ \t]+sha=([0-9a-f]{40})"
+)
+# Only people with write access can record a verdict. Anyone can comment on a
+# public PR, and a marker from a drive-by account is not a review.
+_TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+# GitHub's compare API stops listing files here; a longer list is unprovable.
+_COMPARE_FILE_CAP = 300
+_MERGEABLE_STATES = frozenset({"CLEAN", "UNSTABLE", "HAS_HOOKS"})
+_GATE_RETRY_SLEEP = 3.0   # mergeStateStatus is computed lazily; tests zero this
+
+
+def _is_bot(login: str, bots: Iterable[str]) -> bool:
+    low = (login or "").lower()
+    return low.endswith("[bot]") or low in {b.lower() for b in bots}
+
+
+def _path_matches(path: str, patterns: Iterable[str]) -> str | None:
+    """Case-insensitive glob on the repo-relative path. Case-folded because a
+    macOS checkout aliases `.CONTROL/policy.yaml` onto the real file."""
+    low = path.lower()
+    if low.startswith("./"):
+        low = low[2:]
+    for pat in patterns:
+        if fnmatch.fnmatch(low, pat.lower()):
+            return pat
+    return None
+
+
+@dataclass(frozen=True)
+class P20Marker:
+    verdict: str
+    score: int
+    strata: tuple[str, ...]
+    sha: str
+    author: str
+
+
+def latest_p20_marker(comments: Iterable[dict], bots: Iterable[str]) -> P20Marker | None:
+    """The verdict of the LAST trusted, non-bot comment that names one. Latest
+    wins, so a later FAIL cancels an earlier PASS. A comment that names
+    P20-VERDICT but whose first line does not parse (CRLF, bold, a typo) is a
+    MALFORMED verdict: it blocks, it does not leave the earlier PASS standing.
+    (A CRLF line ending is stripped with the rest of the first line's edges.)"""
+    found: P20Marker | None = None
+    for c in sorted(comments, key=lambda c: c.get("createdAt") or ""):
+        login = (c.get("author") or {}).get("login") or ""
+        if _is_bot(login, bots):
+            continue
+        if (c.get("authorAssociation") or "").upper() not in _TRUSTED_ASSOCIATIONS:
+            continue
+        body = c.get("body") or ""
+        if "p20-verdict" not in body.lower():
+            continue
+        m = _P20_MARKER_RE.fullmatch(body.strip().split("\n", 1)[0].strip())
+        found = (P20Marker(verdict=m.group(1), score=int(m.group(2)),
+                           strata=tuple(m.group(3).split(",")),
+                           sha=m.group(4), author=login) if m
+                 else P20Marker(verdict="MALFORMED", score=0, strata=(), sha="",
+                                author=login))
+    return found
+
+
+@dataclass
+class PRGateFacts:
+    """Everything the gates read, gathered once per decision. A `None` or -1
+    means the query failed, and every gate reads unknown as FAIL."""
+    pr: int
+    state: str = ""
+    is_draft: bool = True
+    base: str = ""
+    head_sha: str = ""
+    merge_state: str = "UNKNOWN"
+    mergeable: str = "UNKNOWN"
+    review_decision: str = ""
+    reviews: list = field(default_factory=list)        # gh reviews (every page)
+    comments: list = field(default_factory=list)       # gh comments
+    additions: int = 0
+    deletions: int = 0
+    changed_files: int = 0
+    files: list = field(default_factory=list)          # repo-relative paths
+    required_checks: list | None = None                # [{name, bucket}]
+    all_checks: list | None = None                     # [{name, bucket}]
+    behind_by: int | None = None
+    unresolved_threads: int = -1
+    marker_delta_files: list | None = None             # files changed marker..head
+    marker_is_ancestor: bool | None = None
+    reviewed_files: list | None = None                 # the PR's files at the marker
+    base_sha: str = ""                                 # base tip the gates saw
+    unmeasured: list = field(default_factory=list)     # changed files with 0 lines
+    l3_recent_commits: int | None = None
+
+
+@dataclass(frozen=True)
+class GateResult:
+    gate: str
+    ok: bool
+    reason: str
+
+
+def governance_paths_touched(g: MergeGates, f: PRGateFacts) -> list[str]:
+    return [p for p in f.files if _path_matches(p, g.governance.paths)]
+
+
+def p20_triggers(g: MergeGates, f: PRGateFacts) -> list[str]:
+    """Why this PR is over the P20 threshold. [] means it is under."""
+    why: list[str] = []
+    loc = f.additions + f.deletions
+    if loc > g.p20.max_loc:
+        why.append(f"{loc} LOC > {g.p20.max_loc}")
+    if f.changed_files > g.p20.max_files:
+        why.append(f"{f.changed_files} files > {g.p20.max_files}")
+    for p in f.files:
+        pat = _path_matches(p, g.p20.public_api_paths)
+        if pat:
+            why.append(f"always-review path {p}")
+            break
+    if f.unmeasured:
+        # A binary change reports 0 lines, so LOC cannot bound its risk.
+        why.append(f"unmeasured (binary) change {f.unmeasured[0]}")
+    if governance_paths_touched(g, f):
+        why.append("governance-class")
+    return why
+
+
+def _p20_verdict(g: MergeGates, f: PRGateFacts,
+                 m: P20Marker | None) -> tuple[bool, str]:
+    if m is None:
+        return False, ("no P20-VERDICT marker from a trusted, non-bot author "
+                       "(record one with `p9 p20-record`)")
+    if m.verdict != "PASS":
+        return False, f"latest marker is {m.verdict} (by {m.author})"
+    if m.score < g.p20.pass_score:
+        return False, f"score {m.score} < {g.p20.pass_score}"
+    if m.sha == f.head_sha:
+        return True, f"PASS {m.score}/10 strata={','.join(m.strata)} at head"
+    # The verdict names an older commit. It carries forward only across commits
+    # that leave every reviewed file and every current PR file untouched, i.e.
+    # an update from the base branch. Anything else is new, unreviewed code.
+    if f.marker_is_ancestor is not True:
+        return False, (f"reviewed commit {m.sha[:12]} is not an ancestor of head "
+                       f"{f.head_sha[:12]} (history rewritten, or unreadable)")
+    if f.marker_delta_files is None or f.reviewed_files is None:
+        return False, f"could not read what changed since {m.sha[:12]}"
+    if (len(f.marker_delta_files) >= _COMPARE_FILE_CAP
+            or len(f.reviewed_files) >= _COMPARE_FILE_CAP):
+        return False, f"too many files changed since {m.sha[:12]} to prove them unrelated"
+    overlap = sorted(set(f.marker_delta_files) & (set(f.reviewed_files) | set(f.files)))
+    if overlap:
+        return False, (f"reviewed at {m.sha[:12]}, but later commits changed "
+                       f"{overlap[:5]}; record a new verdict")
+    return True, (f"PASS {m.score}/10 at {m.sha[:12]}; later commits touch "
+                  f"no reviewed or PR file")
+
+
+def _p20_recorded_binds(g: MergeGates, f: PRGateFacts, m: P20Marker | None) -> str | None:
+    """Under the P20 threshold no verdict is REQUIRED, but once a PR carries a
+    trusted P20 marker it BINDS at any size: the gate judges it exactly as over
+    the threshold (`_p20_verdict`). So a latest FAIL, STOP, MALFORMED or
+    below-pass_score marker blocks, and later commits never clear it; a PASS
+    clears it only if it covers the head (at head, or carried forward across
+    commits that touch no reviewed or PR file). Without this, one `gate-check`
+    after a failed review merged the very PR that review failed, and a PASS
+    naming some other commit cleared a FAIL on the head. Returns the reason to
+    block, or None."""
+    if m is None:
+        return None
+    ok, why = _p20_verdict(g, f, m)
+    if ok:
+        return None
+    return (f"under the P20 threshold, but a recorded P20 verdict binds at any size: "
+            f"{why}. Clear it with a PASS >= {g.p20.pass_score} for the head "
+            f"(`p9 p20-record`); a STOP goes to a person, and a comment that only "
+            f"mentions P20-VERDICT can be edited")
+
+
+def evaluate_merge_gates(g: MergeGates, f: PRGateFacts) -> list[GateResult]:
+    """Pure: judge one PR's facts against the gates. Merge iff every result is
+    ok. Every gate is evaluated (no short-circuit) so a block names ALL causes."""
+    out: list[GateResult] = []
+
+    def gate(name: str, ok: Any, reason: str) -> None:
+        out.append(GateResult(name, bool(ok), reason))
+
+    truncated = f.changed_files > len(f.files)
+    gate("classifiable", f.head_sha and f.base and not truncated,
+         (f"file list truncated ({len(f.files)} of {f.changed_files}); cannot "
+          f"tell whether a governance path is in it") if truncated
+         else ("head/base unreadable" if not (f.head_sha and f.base)
+               else f"{f.changed_files} file(s), head {f.head_sha[:12]}"))
+    gate("open", f.state == "OPEN" and not f.is_draft,
+         f"state={f.state or '?'} draft={f.is_draft}")
+    gate("mergeable", f.mergeable == "MERGEABLE" and f.merge_state in _MERGEABLE_STATES,
+         f"mergeStateStatus={f.merge_state} mergeable={f.mergeable}")
+
+    if f.required_checks is None:
+        gate("required_checks", False, "required checks could not be read")
+    else:
+        real = [c for c in f.required_checks
+                if not _is_bot(c.get("name") or "", g.review_bots)]
+        red = [f"{c.get('name')}={c.get('bucket')}" for c in real
+               if c.get("bucket") != "pass"]
+        if not real:
+            gate("required_checks", False,
+                 "no required check besides a review bot, so nothing vouches for "
+                 "this PR (a rate-limited CodeRabbit reports SUCCESS)")
+        else:
+            gate("required_checks", not red,
+                 ("not green: " + ", ".join(red)) if red
+                 else "green: " + ", ".join(c.get("name") or "?" for c in real))
+
+    gate("up_to_date", f.behind_by == 0 and bool(f.base_sha),
+         "unknown whether behind base" if f.behind_by is None or not f.base_sha
+         else f"{f.behind_by} commit(s) behind {f.base} at {f.base_sha[:12]}")
+
+    # Per reviewer, the latest OPINIONATED review stands: a later COMMENTED
+    # review does not withdraw a change request (GitHub's own rule); a later
+    # APPROVED or DISMISSED one does.
+    stance: dict[str, str] = {}
+    for r in sorted(f.reviews, key=lambda r: r.get("submittedAt") or ""):
+        st = (r.get("state") or "").upper()
+        if st in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+            stance[(r.get("author") or {}).get("login") or "?"] = st
+    asked = sorted(a for a, st in stance.items() if st == "CHANGES_REQUESTED")
+    # `gh pr view --json reviews` preloads every page (preloadPrReviews in gh's
+    # pkg/cmd/pr/shared/finder.go, verified at v2.74.1), so the list is complete.
+    gate("no_changes_requested",
+         not asked and f.review_decision != "CHANGES_REQUESTED",
+         ("changes requested by " + ", ".join(asked)) if asked
+         else ("reviewDecision=CHANGES_REQUESTED"
+               if f.review_decision == "CHANGES_REQUESTED" else "none requested"))
+
+    gate("threads_resolved", f.unresolved_threads == 0,
+         "unresolved threads could not be counted" if f.unresolved_threads < 0
+         else f"{f.unresolved_threads} unresolved review thread(s)")
+
+    marker = latest_p20_marker(f.comments, g.review_bots)
+    why = p20_triggers(g, f)
+    if why:
+        ok, reason = _p20_verdict(g, f, marker)
+        gate("p20", ok, f"required ({'; '.join(why)}): {reason}")
+    else:
+        hold = _p20_recorded_binds(g, f, marker)
+        gate("p20", hold is None, hold or "under the P20 threshold")
+
+    # Something independent must have looked at this PR: a check that actually
+    # ran (not a bot, not an aggregate that passes vacuously when nothing else
+    # ran), or a P20 pass that covers the head.
+    if f.all_checks is None:
+        gate("independent_check", False, "checks could not be read")
+    else:
+        ran = sorted({c.get("name") or "?" for c in f.all_checks
+                      if c.get("bucket") == "pass"
+                      and not _is_bot(c.get("name") or "", g.review_bots)
+                      and (c.get("name") or "") not in g.aggregate_checks})
+        reviewed = _p20_verdict(g, f, marker)[0]
+        gate("independent_check", bool(ran) or reviewed,
+             ("ran and passed: " + ", ".join(ran[:5])) if ran
+             else ("no check ran besides aggregates and bots; a P20 pass covers it"
+                   if reviewed else "no check ran besides aggregates and bots, and "
+                   "no P20 pass covers the PR: nothing independent vouches for it"))
+
+    gov = governance_paths_touched(g, f)
+    if gov:
+        need = g.governance.required_strata
+        have = marker.strata if marker and marker.verdict == "PASS" else ()
+        missing = [s for s in need if s not in have]
+        gate("governance_strata", not missing,
+             f"governance-class ({', '.join(gov)}) needs strata {','.join(need)}; "
+             + (f"missing {','.join(missing)}" if missing else "all recorded"))
+        if f.all_checks is None:
+            gate("governance_checks", False, "checks could not be read")
+        else:
+            # Every run carrying the name must pass: with a duplicate name, a
+            # later green run must not mask a red one.
+            bad = []
+            for n in g.governance.required_checks:
+                runs = [c.get("bucket") for c in f.all_checks if c.get("name") == n]
+                if not runs or any(b != "pass" for b in runs):
+                    bad.append(f"{n}={','.join(runs) or 'absent'}")
+            gate("governance_checks", not bad,
+                 ("not passing: " + ", ".join(bad)) if bad
+                 else "passing: " + ", ".join(g.governance.required_checks))
+        if f.l3_recent_commits is None:
+            gate("l3_rate", False, "governance commits on base could not be counted")
+        else:
+            gate("l3_rate", f.l3_recent_commits < g.governance.l3_max_per_window,
+                 f"{f.l3_recent_commits} governance commit(s) on {f.base} in the last "
+                 f"{g.governance.l3_window_seconds}s (budget "
+                 f"{g.governance.l3_max_per_window})")
+    return out
+
+
+def _gh_json(cmd: list[str], *, any_rc: bool = False) -> Any:
+    """Run a gh command and parse its stdout as JSON. None on any failure.
+    `any_rc` is for `gh pr checks`, which exits 1/8 on red/pending checks but
+    still prints the JSON we want."""
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0 and not any_rc:
+        return None
+    try:
+        return json.loads(out.stdout) if out.stdout.strip() else None
+    except json.JSONDecodeError:
+        return None
+
+
+def _compare_files(repo: str, basehead: str) -> tuple[str | None, list | None]:
+    data = _gh_json(["gh", "api", f"repos/{repo}/compare/{basehead}"])
+    if not isinstance(data, dict):
+        return None, None
+    if not isinstance(data.get("files"), list):
+        return data.get("status"), None
+    # A rename is BOTH paths: renaming AGENTS.md away changes a governance path
+    # as surely as deleting it. An entry without a filename is unreadable.
+    paths: list[str] = []
+    for x in data["files"]:
+        name = x.get("filename") if isinstance(x, dict) else None
+        if not isinstance(name, str) or not name:
+            return data.get("status"), None
+        paths.append(name)
+        prev = x.get("previous_filename")
+        if isinstance(prev, str) and prev:
+            paths.append(prev)
+    return data.get("status"), paths
+
+
+def gather_pr_gate_facts(pr: int, repo: str, g: MergeGates,
+                         listing: "PRListing | None" = None,
+                         base_sha: str | None = None) -> PRGateFacts:
+    """`listing` is the caller's COMPLETE file listing, pre-rename paths
+    included (gh pr view caps its own at 100 and drops renames); without it, a
+    longer PR fails the `classifiable` gate."""
+    f = PRGateFacts(pr=pr)
+    fields = ("state,isDraft,baseRefName,headRefOid,mergeStateStatus,mergeable,"
+              "reviewDecision,reviews,comments,additions,deletions,"
+              "changedFiles,files")
+    view = None
+    for attempt in range(3):
+        view = _gh_json(["gh", "pr", "view", str(pr), "--repo", repo, "--json", fields])
+        if not isinstance(view, dict):
+            return f
+        if (view.get("mergeStateStatus") or "UNKNOWN").upper() != "UNKNOWN" or attempt == 2:
+            break
+        time.sleep(_GATE_RETRY_SLEEP)
+    f.state = (view.get("state") or "").upper()
+    f.is_draft = bool(view.get("isDraft", True))
+    f.base = view.get("baseRefName") or ""
+    f.head_sha = view.get("headRefOid") or ""
+    f.merge_state = (view.get("mergeStateStatus") or "UNKNOWN").upper()
+    f.mergeable = (view.get("mergeable") or "UNKNOWN").upper()
+    f.review_decision = (view.get("reviewDecision") or "").upper()
+    f.reviews = list(view.get("reviews") or [])
+    f.comments = list(view.get("comments") or [])
+    f.additions = int(view.get("additions") or 0)
+    f.deletions = int(view.get("deletions") or 0)
+    f.files = [x.get("path") for x in view.get("files") or [] if x.get("path")]
+    f.changed_files = int(view.get("changedFiles") or len(f.files))
+    if listing is not None:
+        f.files = list(listing.paths)
+        f.unmeasured = list(listing.unmeasured)
+
+    req = _gh_json(["gh", "pr", "checks", str(pr), "--repo", repo, "--required",
+                    "--json", "name,bucket"], any_rc=True)
+    f.required_checks = req if isinstance(req, list) else None
+
+    if f.base and f.head_sha:
+        # With a pinned base (the commit the policy was read at), compare
+        # against that commit, not the moving branch name.
+        ref = base_sha or f.base
+        cmp = _gh_json(["gh", "api", f"repos/{repo}/compare/{ref}...{f.head_sha}"])
+        if isinstance(cmp, dict) and isinstance(cmp.get("behind_by"), int):
+            f.behind_by = cmp["behind_by"]
+            f.base_sha = base_sha or ((cmp.get("base_commit") or {}).get("sha")) or ""
+    f.unresolved_threads = _unresolved_review_threads(pr, repo)
+
+    marker = latest_p20_marker(f.comments, g.review_bots)
+    if marker and f.head_sha and marker.sha != f.head_sha:
+        status, delta = _compare_files(repo, f"{marker.sha}...{f.head_sha}")
+        f.marker_is_ancestor = None if status is None else status == "ahead"
+        f.marker_delta_files = delta
+        if f.base:
+            _, f.reviewed_files = _compare_files(repo, f"{base_sha or f.base}...{marker.sha}")
+
+    allc = _gh_json(["gh", "pr", "checks", str(pr), "--repo", repo,
+                     "--json", "name,bucket"], any_rc=True)
+    f.all_checks = allc if isinstance(allc, list) else None
+    if governance_paths_touched(g, f):
+        f.l3_recent_commits = _governance_landings_in_window(
+            repo, base_sha or f.base, g.governance)
+    return f
+
+
+def _governance_landings_in_window(repo: str, base_ref: str,
+                                   tier: GovernanceTier) -> int | None:
+    """1 if a governance path changed on `base_ref` inside the L3 window, 0 if
+    none did, None if that cannot be told (which the gate reads as FAIL).
+
+    The budget counts LANDINGS, not authored commits. The commits API's `since`
+    filters on each commit's own date, and with a `path` filter it drops merge
+    commits, so a governance commit authored days ago and merged by a human
+    within the window was invisible to it. Instead, walk the commits that
+    reached base inside the window (a merge, a squash or a rebased commit is
+    dated when it landed) and diff each against its first parent, which covers
+    everything a merge brought in. The budget is one per window (the parser
+    pins l3_max_per_window at 1), so the first hit decides; raising that limit
+    would need a real count here.
+
+    Named limits: a commit pushed straight to base with an old committer date
+    (bypassing a PR) is not listed, since `since` filters on committer date;
+    the workspace ruleset rejects direct pushes to main. The walk also lists
+    commits from merged branches, so an "update branch" merge inside the window
+    can re-report an older governance change: an overcount, which fails closed,
+    at one compare call per commit in the window."""
+    if not base_ref:
+        return None
+    since = (_dt.datetime.now(_dt.timezone.utc)
+             - _dt.timedelta(seconds=tier.l3_window_seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = _gh_paginated_list([
+        "gh", "api", "--paginate", "-X", "GET", f"repos/{repo}/commits",
+        "-f", f"sha={base_ref}", "-f", f"since={since}", "-f", "per_page=100",
+        "--jq", '.[] | [.sha, (.parents[0].sha // "")] | @tsv'])
+    if rows is None:
+        return None
+    for row in rows:
+        sha, _, parent = row.partition("\t")
+        if not sha or not parent:
+            return None  # a root commit or an unreadable row: cannot tell
+        _, files = _compare_files(repo, f"{parent}...{sha}")
+        if files is None or len(files) >= _COMPARE_FILE_CAP:
+            return None
+        if any(_path_matches(p, tier.paths) for p in files):
+            return 1
+    return 0
+
+
+def authoritative_auto_merge_policy(
+    local: AutoMergePolicy, repo: str, base: str, touched: Iterable[str],
+) -> tuple[AutoMergePolicy | None, str]:
+    # `base` is a ref: decide_auto_merge passes the base COMMIT it pinned.
+    """The policy that judges a PR is the one on its BASE branch.
+
+    Reading the checkout's copy (cwd walk-up) let a PR that edits
+    .control/policy.yaml be judged by its own edit, so it could approve itself.
+    Returns (policy, source), or (None, why) when the merge must block.
+    BROOMVA_P9_POLICY is an explicit operator/test pin and is honored as-is.
+    """
+    if os.environ.get("BROOMVA_P9_POLICY"):
+        return local, "BROOMVA_P9_POLICY pin"
+    if not repo or "/" not in repo or not base:
+        return None, "no repo/base to read the governing policy from"
+    import urllib.parse
+    try:
+        out = subprocess.run(
+            ["gh", "api", "-H", "Accept: application/vnd.github.raw",
+             f"repos/{repo}/contents/.control/policy.yaml"
+             f"?ref={urllib.parse.quote(base, safe='')}"],
+            capture_output=True, text=True, timeout=30, check=False)
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        return None, f"base policy unreadable: {e}"
+    if out.returncode == 0:
+        try:
+            return load_policy_text(out.stdout).auto_merge, f"{repo}@{base}"
+        except PolicyError as e:
+            return None, f"base policy on {repo}@{base} is malformed: {e}"
+    # "No commit found for the ref" is also a 404, but it means the base is
+    # unreadable, not that the repo has no policy.
+    if "Not Found" in out.stderr and "No commit found" not in out.stderr:
+        if any(p.lower().endswith(".control/policy.yaml") for p in touched):
+            return None, ("the PR adds a policy file its base does not have; "
+                          "a policy cannot authorize its own introduction")
+        return local, "local policy (the PR's repo has none on its base)"
+    return None, f"base policy unreadable: {out.stderr.strip()[:160]}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Failure classifier (rubric-driven regex matcher)
+# ─────────────────────────────────────────────────────────────────────────────
+@dataclass(frozen=True)
+class RubricEntry:
+    failure_type: str
+    patterns: tuple[re.Pattern[str], ...]
+    heal_command: str | None      # None => escalate (cannot auto-fix)
+    confidence_floor: float = 0.7  # below this, drop to "unclassified"
+
+
+def _builtin_rubric() -> tuple[RubricEntry, ...]:
+    """Default rubric. Mirrors references/scoring-rubric.md.
+
+    Rubric markdown is the authoritative source for humans; this constant is
+    the authoritative source for code. Tests assert the two stay in sync.
+    """
+    return (
+        RubricEntry(
+            failure_type="lint",
+            patterns=(
+                re.compile(r"biome\s+(check|lint).*(found|error)", re.IGNORECASE),
+                re.compile(r"eslint.*\d+\s+(error|problem)", re.IGNORECASE),
+                re.compile(r"clippy.*::error", re.IGNORECASE),
+                re.compile(r"::error.*lint", re.IGNORECASE),
+            ),
+            heal_command="bun run lint:fix",
+        ),
+        RubricEntry(
+            failure_type="format",
+            patterns=(
+                re.compile(r"prettier.*--check.*would reformat", re.IGNORECASE),
+                re.compile(r"rustfmt.*Diff in", re.IGNORECASE),
+                re.compile(r"would reformat", re.IGNORECASE),
+            ),
+            heal_command="bun run format",
+        ),
+        RubricEntry(
+            failure_type="type",
+            patterns=(
+                re.compile(r"\berror TS\d+\b"),
+                re.compile(r"\berror\[E\d+\]"),
+                re.compile(r"type error.*at\s+[\w./]+:\d+", re.IGNORECASE),
+            ),
+            heal_command=None,  # escalate — type errors need human reasoning
+        ),
+        RubricEntry(
+            failure_type="test_flaky",
+            patterns=(
+                # Detected by signature-history rather than text — see
+                # classify_with_history. The pattern below matches generic
+                # test failure for fallback recognition only.
+                re.compile(r"^\s*FAIL\s+", re.MULTILINE),
+            ),
+            heal_command="gh run rerun --failed",
+            confidence_floor=0.9,  # only confident if history confirms flakiness
+        ),
+        RubricEntry(
+            failure_type="codegen_drift",
+            patterns=(
+                re.compile(r"(generated|codegen).*(out of (date|sync)|stale)", re.IGNORECASE),
+                re.compile(r"schema mismatch", re.IGNORECASE),
+                re.compile(r"graphql codegen.*diff", re.IGNORECASE),
+            ),
+            heal_command="bun run codegen",
+        ),
+        RubricEntry(
+            failure_type="import_missing",
+            patterns=(
+                re.compile(r"Cannot find module ['\"]([^'\"]+)['\"]", re.IGNORECASE),
+                re.compile(r"unresolved import\s+`([^`]+)`", re.IGNORECASE),
+                re.compile(r"Module not found", re.IGNORECASE),
+            ),
+            heal_command=None,  # complex — escalate v1
+        ),
+    )
+
+
+def _signature_hash(log: str) -> str:
+    """Stable signature for a failure log: first error-ish line, normalized."""
+    candidates = [
+        ln for ln in log.splitlines()
+        if re.search(r"\b(error|FAIL|fatal)\b", ln, re.IGNORECASE)
+    ]
+    src = candidates[0] if candidates else log[:200]
+    norm = re.sub(r"\s+", " ", src).strip()
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
+
+
+def classify(
+    log: str,
+    rubric: tuple[RubricEntry, ...] | None = None,
+) -> ClassifierResult:
+    """Pure classifier: regex match against the rubric.
+
+    Returns the best match. If best confidence < that entry's floor, returns
+    an `unclassified` result (which the caller must treat as `escalate`).
+    """
+    rubric = rubric or _builtin_rubric()
+    best: tuple[RubricEntry, float] | None = None
+    for entry in rubric:
+        score = _entry_score(entry, log)
+        if score == 0.0:
+            continue
+        if best is None or score > best[1]:
+            best = (entry, score)
+    sig = _signature_hash(log)
+    if best is None or best[1] < best[0].confidence_floor:
+        return ClassifierResult(
+            failure_type="unclassified",
+            classified=False,
+            confidence=best[1] if best else 0.0,
+            heal_command=None,
+            signature_hash=sig,
+            rationale=(
+                f"no rubric entry above floor (best={best[0].failure_type}@{best[1]:.2f})"
+                if best else "no rubric pattern matched"
+            ),
+        )
+    entry, conf = best
+    return ClassifierResult(
+        failure_type=entry.failure_type,
+        classified=entry.heal_command is not None,
+        confidence=conf,
+        heal_command=entry.heal_command,
+        signature_hash=sig,
+        rationale=f"matched {entry.failure_type} at confidence {conf:.2f}",
+    )
+
+
+def _entry_score(entry: RubricEntry, log: str) -> float:
+    """How well does this rubric entry match? 0.0–1.0."""
+    matched = sum(1 for p in entry.patterns if p.search(log))
+    if matched == 0:
+        return 0.0
+    # Scale by fraction of patterns hit, then cap at 1.0. Multi-pattern hits
+    # boost confidence; single-pattern hits sit at ~0.7 — exactly the default
+    # confidence_floor, so single-pattern matches *just* qualify.
+    base = 0.7 + 0.1 * (matched - 1)
+    return min(base, 1.0)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Evaluator (progress-score brain)
+# ─────────────────────────────────────────────────────────────────────────────
+def evaluate(
+    *,
+    attempt: int,
+    max_attempts: int,
+    classifier_confidence: float,
+    prev_signature: str | None,
+    curr_signature: str,
+    prev_failure_count: int | None,
+    curr_failure_count: int,
+    stability_floor: float,
+) -> EvaluatorResult:
+    """Compute progress_score per spec §6.3.
+
+    progress_score =
+       0.4 × signature_changed?   +
+       0.3 × failures_decreased?  +
+       0.2 × (1 - attempt/max)    +
+       0.1 × classifier_confidence
+    """
+    sig_changed = prev_signature is not None and curr_signature != prev_signature
+    failures_dec = (
+        prev_failure_count is not None and curr_failure_count < prev_failure_count
+    )
+    budget = max(0.0, 1.0 - (attempt / max(1, max_attempts)))
+    score = (
+        0.4 * (1.0 if sig_changed else 0.0)
+        + 0.3 * (1.0 if failures_dec else 0.0)
+        + 0.2 * budget
+        + 0.1 * classifier_confidence
+    )
+    return EvaluatorResult(
+        progress_score=round(score, 4),
+        signature_changed=sig_changed,
+        failures_decreased=failures_dec,
+        budget_remaining=round(budget, 4),
+        classifier_confidence=classifier_confidence,
+        stalled=score < stability_floor,
+    )
+
+
+def stalled_for_two_cycles(
+    history: Iterable[float], stability_floor: float
+) -> bool:
+    """True iff the last two evaluator scores are both below floor."""
+    last_two = list(history)[-2:]
+    return len(last_two) >= 2 and all(s < stability_floor for s in last_two)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Wait queue
+# ─────────────────────────────────────────────────────────────────────────────
+def _validate_source(source: str) -> str:
+    if source not in _QUEUE_PRIORITY:
+        raise P9Error(
+            f"invalid source '{source}'; must be one of {_QUEUE_PRIORITY}"
+        )
+    return source
+
+
+# Sentinel: "resolve to the current session at call time". Distinct from
+# None (which means "no scoping / all sessions").
+_CURRENT_SESSION = object()
+
+
+def _resolve_scope(session_id: Any, all_sessions: bool) -> str | None:
+    """Map the (session_id, all_sessions) arg pair to a concrete filter:
+    a session-id string to filter by, or None for the global view."""
+    if all_sessions:
+        return None
+    if session_id is _CURRENT_SESSION:
+        return current_session_id()
+    return session_id
+
+
+def _queue_ttl_seconds() -> float:
+    """Wait-queue item TTL. Overridable via BROOMVA_P9_QUEUE_TTL_DAYS
+    (default 14 days). 0 disables age-based pruning."""
+    raw = os.environ.get("BROOMVA_P9_QUEUE_TTL_DAYS", "14")
+    try:
+        days = float(raw)
+    except ValueError:
+        days = 14.0
+    return max(0.0, days) * 86400.0
+
+
+def _iso_age_seconds(ts: str) -> float:
+    try:
+        when = _dt.datetime.fromisoformat(ts)
+    except ValueError:
+        return 0.0  # unparseable → treat as fresh (never auto-prune)
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=_dt.timezone.utc)
+    return (_dt.datetime.now(_dt.timezone.utc) - when).total_seconds()
+
+
+def _item_is_stale(it: WaitQueueItem) -> bool:
+    """A queue item is stale (eligible for pruning) when it has aged past
+    the TTL, or its owning PR has reached a terminal state — the wait it was
+    queued behind is over, so the work is moot."""
+    ttl = _queue_ttl_seconds()
+    if ttl > 0 and _iso_age_seconds(it.created_at) > ttl:
+        return True
+    # Terminal-PR pruning requires a KNOWN repo: identity is (repo, pr), so an
+    # item with no repo can't be disambiguated from a same-numbered PR in
+    # another repo. Such items fall back to TTL-only pruning.
+    if it.pr is not None and it.repo:
+        st = current_pr_state(it.pr, it.repo)
+        if st is not None and is_terminal(st):
+            return True
+    return False
+
+
+def _item_visible(it: WaitQueueItem, scope: str | None) -> bool:
+    """Visible in a session's view when un-scoped global view (scope None),
+    owned by the session, or legacy-unowned ("" — drained by whoever pops)."""
+    if scope is None:
+        return True
+    return it.session_id in ("", scope)
+
+
+def queue_push(item: str, source: str, *, pr: int | None = None,
+               isolation_tier: str = "none", session_id: str | None = None,
+               repo: str = "") -> WaitQueueItem:
+    src = _validate_source(source)
+    entry = WaitQueueItem(
+        id=uuid.uuid4().hex[:12],
+        source=src,
+        item=item,
+        created_at=_utcnow(),
+        pr=pr,
+        isolation_tier=isolation_tier,
+        session_id=session_id if session_id is not None else current_session_id(),
+        repo=repo or "",
+    )
+    jsonl_append(wait_queue_jsonl(), entry.to_jsonl(), queue_lock_path())
+    return entry
+
+
+def queue_list(session_id: Any = _CURRENT_SESSION, *,
+               all_sessions: bool = False,
+               include_stale: bool = False) -> list[WaitQueueItem]:
+    """List queue items in priority order. Defaults to the *current
+    session's* view (its own items + legacy-unowned items), excluding stale
+    items. ``all_sessions=True`` shows every session's items; ``include_stale``
+    keeps terminal-PR / aged-out items."""
+    scope = _resolve_scope(session_id, all_sessions)
+    rows, _ = jsonl_read_all(wait_queue_jsonl())
+    items = [WaitQueueItem(**r) for r in rows]
+    items = [it for it in items if _item_visible(it, scope)]
+    if not include_stale:
+        items = [it for it in items if not _item_is_stale(it)]
+    items.sort(key=lambda it: (_QUEUE_PRIORITY.index(it.source), it.created_at))
+    return items
+
+
+def queue_pop(session_id: Any = _CURRENT_SESSION, *,
+              all_sessions: bool = False) -> WaitQueueItem | None:
+    """Atomic, scope-aware pop. Returns the highest-priority *in-scope,
+    non-stale* item and removes it. Out-of-scope items (other sessions') are
+    preserved on disk; stale items are pruned as a side effect."""
+    scope = _resolve_scope(session_id, all_sessions)
+    with file_lock(queue_lock_path()):
+        rows, _ = jsonl_read_all(wait_queue_jsonl())
+        if not rows:
+            return None
+        eligible: list[WaitQueueItem] = []
+        retained: list[WaitQueueItem] = []   # out-of-scope, keep on disk
+        for r in rows:
+            it = WaitQueueItem(**r)
+            if _item_is_stale(it):
+                continue  # prune from disk regardless of scope
+            if _item_visible(it, scope):
+                eligible.append(it)
+            else:
+                retained.append(it)
+        if not eligible:
+            # Persist the prune of stale items even when nothing pops.
+            wait_queue_jsonl().write_text(
+                "".join(it.to_jsonl() + "\n" for it in retained), encoding="utf-8",
+            )
+            return None
+        eligible.sort(key=lambda it: (_QUEUE_PRIORITY.index(it.source), it.created_at))
+        head, *rest = eligible
+        wait_queue_jsonl().write_text(
+            "".join(it.to_jsonl() + "\n" for it in (retained + rest)),
+            encoding="utf-8",
+        )
+        return head
+
+
+def queue_clear(session_id: Any = _CURRENT_SESSION, *,
+                all_sessions: bool = False) -> int:
+    """Clear queue items. Defaults to the current session's *own* items
+    (exact-owner match — legacy-unowned items are preserved unless
+    ``all_sessions=True``). Returns the number removed."""
+    scope = _resolve_scope(session_id, all_sessions)
+    with file_lock(queue_lock_path()):
+        if not wait_queue_jsonl().exists():
+            return 0
+        rows, _ = jsonl_read_all(wait_queue_jsonl())
+        items = [WaitQueueItem(**r) for r in rows]
+        if scope is None:
+            wait_queue_jsonl().write_text("", encoding="utf-8")
+            return len(items)
+        keep = [it for it in items if it.session_id != scope]
+        removed = len(items) - len(keep)
+        wait_queue_jsonl().write_text(
+            "".join(it.to_jsonl() + "\n" for it in keep), encoding="utf-8",
+        )
+        return removed
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# State store
+# ─────────────────────────────────────────────────────────────────────────────
+def _utcnow() -> str:
+    return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+
+
+def _read_state_rows() -> list[dict[str, Any]]:
+    """The state log, as recorded. **Pure file read — no resolution, no
+    subprocess, no network.**
+
+    A bare-number legacy row (``repo == ""``) is returned exactly as written.
+    p9 does **not** attribute it to the ambient repo, because "" is already
+    the row's true identity and a perfectly good key: it collides with no real
+    repo, so it can neither shadow one nor — with a repo-scoped ceiling — hold
+    its slot; ``current_pr_state(pr, "")`` still reaches it; and ``reap`` /
+    ``rearm`` still drain it. Nothing about such a row is discarded; p9 simply
+    declines to invent the one thing it does not know.
+    """
+    rows, _ = jsonl_read_all(state_jsonl())
+    return rows
+
+
+def _row_repo(row: dict[str, Any]) -> str:
+    """The repo a row **actually recorded**. "" for a bare-number legacy row.
+
+    "" means p9 does not know, and **unknown is never acted on**. Callers that
+    leave the process — spawning ``gh pr checks --repo X``, asking GitHub "is
+    #N merged in X?", re-arming a watcher — must route through this accessor
+    and refuse when it is empty, because a wrong repo there is acted upon.
+
+    This is deliberately the whole of it: there is no inference to unwind,
+    because p9 no longer invents a repo for rows that never recorded one.
+    """
+    return row.get("repo") or ""
+
+
+def _owner_of(row: dict[str, Any]) -> str:
+    """The ``watcher_id`` a row records, normalized to a string.
+
+    A row may carry ``watcher_id: null`` (or omit it). Readers and writers must
+    agree on what that means, or a caller reading `None` off a row can never
+    match the `"None"` a naive `str()` would produce on the other side —
+    which made such rows permanently unguardable-past. Both sides go through
+    here, so absence and null are the same empty string everywhere.
+    """
+    return str(row.get("watcher_id") or "")
+
+
+class _Unset:
+    """Sentinel: no ownership expectation was expressed."""
+    def __repr__(self) -> str:          # pragma: no cover - debug aid
+        return "<unguarded>"
+
+
+UNGUARDED = _Unset()
+
+
+class StaleWriteRejected(P9Error):
+    """A guarded append lost the key it expected to own."""
+    code = EXIT_DEGRADED
+
+
+def append_state_event(event: PRStateEvent, *,
+                       expect_owner: str | _Unset = UNGUARDED) -> bool:
+    """Append a state event. Returns True if it was written.
+
+    ``expect_owner`` (BRO-2374) makes the append a **compare-and-swap**: it
+    applies only if the latest row for ``(repo, pr)`` carries exactly that
+    ``watcher_id``. Anything else — a different owner, or **no row at all** —
+    rejects the write and returns False.
+
+    Passing the owner *explicitly* rather than reading it off the event is
+    what lets a transition assign a **new** ``watcher_id`` while still proving
+    it owned the old one; ``rearm`` does exactly that. An implicit
+    ``event.watcher_id`` check could not express it.
+
+    **Fail-closed on a missing row.** The contract is "I still own this key",
+    and a writer with no row to point at cannot prove ownership — the log may
+    have been rotated, truncated, or hand-edited while an orphan watcher was
+    still running, and letting it recreate the key would resurrect exactly the
+    state the guard exists to prevent. An earlier revision failed *open* here
+    on the reasoning that there was "nothing to be stale against"; that
+    contradicted the contract the docstring stated one line above it.
+
+    Omitting ``expect_owner`` leaves the append unguarded. Two kinds of write
+    legitimately do so:
+
+    * an **initial arm**, which by definition has no prior row to own — a
+      guarded creation would always fail closed;
+    * an **explicit takeover** — ``--force`` supersede, operator ``abandon`` —
+      whose entire purpose is to seize a key from another watcher.
+
+    Everything else is a transition derived from a row it read earlier, and
+    should name the owner it expects to still find.
+
+    Why this is needed at all: an append-only log with last-row-wins semantics
+    has nowhere to express *"write only if this key is still mine"*, so a
+    superseded watcher's late fold buried a live one:
+
+        w1 arms                 -> (WATCHING, w1)
+        --force supersedes it   -> (ABANDONED, watch-supersede)
+        w2 arms as replacement  -> (WATCHING, w2)
+        w1's orphan folds late  -> (ABANDONED, w1)     <- stale write
+
+    ``open_prs`` keeps only the last row per key, so w1's late ABANDONED
+    removed w2 from the open set while w2 was still running; the ceiling then
+    counted zero and admitted another watcher against a live one. Every row
+    there is valid and every transition legal, which is why this is a property
+    of the store rather than of the supersede path.
+
+    **The read and the append share one lock acquisition.** Two would leave
+    exactly the window this closes. That is not merely argued: the race is
+    reproducible under a wide enough window — see
+    ``tests/reproductions/lock_necessity.py``, which buried the live watcher
+    3/3 runs with the lock removed and 0/3 with it held, against a 60k-row
+    log. It is kept out of the default suite because a timing race makes a
+    poor CI test, not because it is untested. :func:`file_lock` is *not*
+    reentrant (flock is per open-file-description), so the write is inlined
+    rather than delegating to :func:`jsonl_append`.
+    """
+    assert_legal_transition(PRState(event.from_state), PRState(event.to_state))
+    # Normalize on write so the stored key is exactly what repo_key() reads.
+    event.repo = canonical_repo(event.repo)
+    if isinstance(expect_owner, _Unset):
+        jsonl_append(state_jsonl(), event.to_jsonl(), state_lock_path())
+        return True
+    if not isinstance(expect_owner, str):
+        # The annotation says `str | _Unset`; nothing enforced it, so a caller
+        # passing None got a permanently unsatisfiable expectation instead of
+        # an error — `_owner_of` normalizes every stored owner to a string, so
+        # None can never match and every such write would be rejected forever,
+        # silently. Absence of an expectation is UNGUARDED, not None.
+        raise P9Error(
+            f"expect_owner must be a str (got {type(expect_owner).__name__}); "
+            f"pass UNGUARDED to append without an ownership check")
+    with file_lock(state_lock_path()):
+        rows, _ = jsonl_read_all(state_jsonl())
+        want = repo_key(event.repo)
+        # `found` is tracked separately from `owner` on purpose. Folding both
+        # into one nullable value collapsed two different facts — "no row for
+        # this key" and "a row whose watcher_id is null" — and got each one
+        # wrong: a vanished key compared equal to a null expectation and failed
+        # OPEN, while a stored null stringified to "None" and could never match
+        # the None the caller read out of it, making such a row permanently
+        # unreapable.
+        found = False
+        owner = ""
+        for r in rows:
+            if r.get("pr") != event.pr:
+                continue
+            if repo_key(r.get("repo", "")) != want:
+                continue
+            found = True
+            owner = _owner_of(r)
+        if not found or owner != expect_owner:
+            return False
+        path = state_jsonl()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = event.to_jsonl()
+        with path.open("a", encoding="utf-8") as f:
+            f.write(payload)
+            if not payload.endswith("\n"):
+                f.write("\n")
+        return True
+
+
+def current_pr_state(pr: int, repo: str | None = None) -> PRState | None:
+    """Latest state for a PR. When ``repo`` is given, identity is the
+    composite ``(repo, pr)`` — so the same PR number in two repos never
+    resolves to each other's state. ``repo=None`` keeps the legacy
+    match-by-number behavior for callers that don't know the repo.
+
+    Every lifecycle command passes a repo: reading bare-number here is the
+    exact defect BRO-1988 fixes (``merge-ready 256`` answering with another
+    repo's #256). Matching is via :func:`repo_key`, so case and URL spelling
+    differences never split one logical repo into two keys.
+    """
+    rows = _read_state_rows()
+    want = repo_key(repo) if repo is not None else None
+    last: PRState | None = None
+    for r in rows:
+        if r.get("pr") != pr:
+            continue
+        if want is not None and repo_key(r.get("repo", "")) != want:
+            continue
+        last = PRState(r["to_state"])
+    return last
+
+
+def latest_row(pr: int, repo: str | None = None) -> dict[str, Any] | None:
+    """The most recent raw event row for a PR (composite ``(repo, pr)`` when
+    repo is given). Used for watcher de-dup — we need the pid + state, not
+    just the state."""
+    rows = _read_state_rows()
+    want = repo_key(repo) if repo is not None else None
+    last: dict[str, Any] | None = None
+    for r in rows:
+        if r.get("pr") != pr:
+            continue
+        if want is not None and repo_key(r.get("repo", "")) != want:
+            continue
+        last = r
+    return last
+
+
+def open_prs(session_id: str | None = None) -> list[dict[str, Any]]:
+    """All PRs that haven't reached a terminal state.
+
+    Keyed by ``(repo_key(repo), pr)`` so the same PR number in two repos never
+    collides (the bare-number keying clobbered cross-repo state).
+
+    When ``session_id`` is given, only rows owned by that session are
+    returned — this is what makes the concurrency ceiling *per-session*
+    instead of one global merge-train. ``session_id=None`` returns the
+    global view (``status`` / ``cleanup`` / ``reap`` / legacy callers).
+    Legacy rows (no ``session_id``) belong to no session, so they never
+    count against a real session's ceiling — they are drained by ``reap``.
+    """
+    rows = _read_state_rows()
+    seen: dict[tuple[str, int], dict[str, Any]] = {}
+    for r in rows:
+        seen[(repo_key(r.get("repo", "")), r["pr"])] = r
+    out: list[dict[str, Any]] = []
+    for r in seen.values():
+        if is_terminal(PRState(r["to_state"])):
+            continue
+        if session_id is not None and r.get("session_id", "") != session_id:
+            continue
+        out.append(r)
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Notify dispatcher (BRO-1701) — push watcher/wait state changes off-terminal
+# ─────────────────────────────────────────────────────────────────────────────
+def _load_notify_config() -> tuple[list[dict[str, Any]], str | None]:
+    """Channels from $P9_HOME/notify.json plus env quick-config.
+
+    Config shape:
+        {"channels": [
+            {"type": "ntfy",    "topic": "...", "url": "https://ntfy.sh",
+             "token": "...", "tags": "robot"},
+            {"type": "webhook", "url": "https://..."},
+            {"type": "command", "cmd": "path/to/hook.sh", "timeout": 15}
+        ]}
+
+    Env quick-config: BROOMVA_P9_NTFY_TOPIC adds an ntfy.sh channel without a
+    config file. Returns (channels, config_error) — a malformed file is
+    reported in the audit row, never raised.
+    """
+    channels: list[dict[str, Any]] = []
+    err: str | None = None
+    path = notify_config_path()
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            for ch in raw.get("channels", []):
+                if isinstance(ch, dict) and ch.get("type"):
+                    channels.append(ch)
+        except (json.JSONDecodeError, OSError, AttributeError) as e:
+            err = f"notify.json unreadable: {type(e).__name__}: {e}"
+    topic = os.environ.get("BROOMVA_P9_NTFY_TOPIC", "").strip()
+    if topic and not any(c.get("type") == "ntfy" for c in channels):
+        channels.append({"type": "ntfy", "topic": topic})
+    return channels, err
+
+
+def _deliver_ntfy(ch: dict[str, Any], title: str, body: str) -> None:
+    # ntfy's JSON publish endpoint (topic in the body, POST to the server
+    # root): titles ride in the UTF-8 JSON body, never in an HTTP header —
+    # header values are latin-1 and our real titles carry '→'/'—', which
+    # made every genuine termination push die on UnicodeEncodeError while
+    # the ASCII smoke test passed (P20 finding #1).
+    base = (ch.get("url") or "https://ntfy.sh").rstrip("/")
+    headers = {"Content-Type": "application/json"}
+    if ch.get("token"):
+        headers["Authorization"] = f"Bearer {ch['token']}"
+    data = json.dumps({
+        "topic": str(ch["topic"]),
+        "title": title,
+        "message": body,
+        "tags": [t.strip() for t in str(ch.get("tags", "robot")).split(",")],
+    }, separators=(",", ":")).encode("utf-8")
+    req = urllib.request.Request(base, data=data, headers=headers,
+                                 method="POST")
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        resp.read()
+
+
+def _deliver_webhook(ch: dict[str, Any], title: str, body: str,
+                     payload: dict[str, Any]) -> None:
+    data = json.dumps(
+        {"title": title, "body": body, "payload": payload},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        ch["url"], data=data,
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        resp.read()
+
+
+def _deliver_command(ch: dict[str, Any], title: str, body: str,
+                     payload: dict[str, Any]) -> None:
+    data = json.dumps(
+        {"title": title, "body": body, "payload": payload},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    subprocess.run(
+        ch["cmd"], shell=True, input=data,
+        timeout=float(ch.get("timeout", 15)), check=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+
+def notify(kind: str, title: str, body: str,
+           payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Best-effort fan-out to all configured channels.
+
+    ALWAYS appends an audit row to notify.jsonl (per-channel delivery
+    results included) — even with zero channels configured. Channel and
+    audit failures are recorded/suppressed, never raised: a notification
+    must never take down the watcher it reports on.
+    """
+    payload = payload or {}
+    deliveries: list[dict[str, Any]] = []
+    channels, cfg_err = _load_notify_config()
+    if cfg_err:
+        deliveries.append({"channel": "config", "ok": False, "error": cfg_err})
+    # Escalation-class kinds additionally fire the policy escalation hook —
+    # the ci_heal.escalation_channel.notify_hook config predates this
+    # dispatcher and was never invoked from code until now. Substring match
+    # so "termination:escalated" (what the invariant actually emits) and
+    # "stuck" qualify, not just a literal "escalation" kind (P20 finding #5).
+    if "escalat" in kind or kind == "stuck":
+        with contextlib.suppress(Exception):
+            hook = load_policy(validate_auto_merge=False).ci_heal.escalation_channel.notify_hook
+            hook_path = Path(hook)
+            if not hook_path.is_absolute():
+                hook_path = policy_yaml_path().parent.parent / hook
+            if hook_path.exists():
+                channels = channels + [{"type": "command", "cmd": str(hook_path)}]
+    for ch in channels:
+        ctype = str(ch.get("type"))
+        try:
+            if ctype == "ntfy":
+                _deliver_ntfy(ch, title, body)
+            elif ctype == "webhook":
+                _deliver_webhook(ch, title, body, payload)
+            elif ctype == "command":
+                _deliver_command(ch, title, body, payload)
+            else:
+                raise ValueError(f"unknown channel type {ctype!r}")
+            deliveries.append({"channel": ctype, "ok": True})
+        except Exception as e:  # noqa: BLE001 — per-channel isolation is the point
+            deliveries.append(
+                {"channel": ctype, "ok": False,
+                 "error": f"{type(e).__name__}: {e}"})
+    row = {"ts": _utcnow(), "kind": kind, "title": title, "body": body,
+           "payload": payload, "deliveries": deliveries}
+    with contextlib.suppress(Exception):
+        jsonl_append(notify_jsonl(), json.dumps(row, separators=(",", ":")),
+                     notify_lock_path())
+    return row
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Termination reports (BRO-1701) — the P9 termination invariant
+#
+# > On watcher termination (success, failure, OR kill) always report
+# > state + next action. Killed watchers must not die silently.
+#
+# Every exit path of `p9 watch` / `p9 wait-for`, every reaped row, and every
+# stuck finding produces one of these. The Tier-1 #1 post-notification
+# reconcile rule consumes this shape — keep fields additive-only.
+# ─────────────────────────────────────────────────────────────────────────────
+REPORT_MARKER = "P9-TERMINATION-REPORT"
+
+_NEXT_ACTION: dict[str, str] = {
+    PRState.PUSHED.value: "p9 watch <pr>",
+    PRState.WATCHING.value: ("watcher live — no action; `p9 stuck-scan` if it "
+                             "looks wedged"),
+    PRState.GREEN.value: ("p9 merge-status <pr>, then p9 merge-ready <pr> "
+                          "(merge authorization stays with the policy)"),
+    PRState.RED_CLASSIFIED.value: ("p9 heal <pr> --classify, then --apply if "
+                                   "evaluator-positive"),
+    PRState.RED_UNCLASSIFIED.value: ("inspect failing checks "
+                                     "(`gh pr checks <pr>`); escalate via "
+                                     "Linear if unclassifiable"),
+    PRState.HEALING.value: "let the heal finish; p9 status --pr <pr>",
+    PRState.MERGE_READY.value: "p9 auto-merge <pr> (policy-gated)",
+    PRState.MERGED.value: "done — no action",
+    PRState.ESCALATED.value: ("human decision required — see the Linear "
+                              "escalation ticket"),
+    PRState.ABANDONED.value: ("re-arm: p9 watch <pr> --adopt (or `p9 rearm` "
+                              "to re-arm every dead watcher)"),
+}
+
+_WAIT_NEXT_ACTION: dict[str, str] = {
+    WaitState.WAITING.value: ("wait live — no action; `p9 stuck-scan` if the "
+                              "heartbeat looks stale"),
+    WaitState.SUCCEEDED.value: "done — continue the arc that was blocked on it",
+    WaitState.FAILED.value: ("command not runnable — fix the command and "
+                             "re-run p9 wait-for"),
+    WaitState.TIMED_OUT.value: ("inspect the target (deploy/build) directly; "
+                                "re-run p9 wait-for with a larger --timeout"),
+    WaitState.KILLED.value: "re-arm: p9 rearm (re-spawns from the recorded argv)",
+    WaitState.ABANDONED.value: "re-arm: p9 rearm (re-spawns from the recorded argv)",
+}
+
+
+def _log_tail(path: Path | str | None, lines: int = 20) -> list[str]:
+    if not path:
+        return []
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return text.splitlines()[-lines:]
+
+
+def pr_termination_report(row: dict[str, Any], *, cause: str,
+                          with_log_tail: bool = True) -> dict[str, Any]:
+    state = str(row.get("to_state", ""))
+    extra = row.get("extra") or {}
+    report: dict[str, Any] = {
+        "report": "p9-termination",
+        "kind": "pr-watch",
+        "ts": _utcnow(),
+        "last_event_ts": row.get("ts", ""),
+        "pr": row.get("pr"),
+        "repo": row.get("repo", ""),
+        "state": state,
+        "cause": cause,
+        "watcher_id": row.get("watcher_id", ""),
+        "session_id": row.get("session_id", ""),
+        "next_action": _NEXT_ACTION.get(state, "p9 status"),
+    }
+    if extra.get("reason"):
+        report["reason"] = extra["reason"]
+    if with_log_tail and extra.get("log"):
+        report["log"] = extra["log"]
+        tail = _log_tail(extra["log"])
+        if tail:
+            report["log_tail"] = tail
+    return report
+
+
+def wait_termination_report(row: dict[str, Any], *, cause: str) -> dict[str, Any]:
+    state = str(row.get("to_state", ""))
+    extra = row.get("extra") or {}
+    report: dict[str, Any] = {
+        "report": "p9-termination",
+        "kind": "wait",
+        "ts": _utcnow(),
+        "last_event_ts": row.get("ts", ""),
+        "wait_id": row.get("wait_id", ""),
+        "name": row.get("name", ""),
+        "state": state,
+        "cause": cause,
+        "session_id": row.get("session_id", ""),
+        "next_action": _WAIT_NEXT_ACTION.get(state, "p9 status"),
+    }
+    for k in ("cmd", "reason", "polls", "last_exit"):
+        if extra.get(k) is not None:
+            report[k] = extra[k]
+    return report
+
+
+def emit_termination_report(report: dict[str, Any], *,
+                            do_notify: bool = True) -> None:
+    """Print the report (stderr, marker-prefixed, greppable) and push it.
+
+    stderr on purpose: `p9 status --json` / `p9 watch --json` keep stdout
+    machine-parseable even when a preflight reap emits reports.
+    """
+    print(f"{REPORT_MARKER} " + json.dumps(report, separators=(",", ":")),
+          file=sys.stderr)
+    human = (f"p9: {report['kind']} "
+             f"{report.get('pr') or report.get('name')} → {report['state']} "
+             f"({report['cause']}); next: {report['next_action']}")
+    print(human, file=sys.stderr)
+    if do_notify:
+        ident = (f"PR #{report['pr']} {report.get('repo', '')}"
+                 if report["kind"] == "pr-watch"
+                 else f"wait '{report.get('name', '')}'")
+        notify(
+            f"termination:{report['state'].lower()}",
+            f"p9 {ident} → {report['state']}",
+            f"cause={report['cause']}; next: {report['next_action']}",
+            report,
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Generic waits (BRO-1701) — `p9 wait-for`: non-PR blocking operations
+# (deploy readiness, long extractions) get the same lifecycle discipline
+# as PR watches: state rows, heartbeats, termination reports, re-arm.
+# ─────────────────────────────────────────────────────────────────────────────
+def append_wait_event(event: WaitEvent) -> None:
+    jsonl_append(waits_jsonl(), event.to_jsonl(), waits_lock_path())
+
+
+def all_wait_rows() -> dict[str, dict[str, Any]]:
+    """Latest row per wait_id."""
+    rows, _ = jsonl_read_all(waits_jsonl())
+    seen: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        wid = r.get("wait_id")
+        if wid:
+            seen[wid] = r
+    return seen
+
+
+def open_waits(session_id: str | None = None) -> list[dict[str, Any]]:
+    out = []
+    for r in all_wait_rows().values():
+        if r.get("to_state") != WaitState.WAITING.value:
+            continue
+        if session_id is not None and r.get("session_id", "") != session_id:
+            continue
+        out.append(r)
+    return out
+
+
+def _safe_slug(s: str, max_len: int = 80) -> str:
+    """Filesystem-safe path component. Wait ids/names come from CLI args and
+    JSONL state — either could carry '/' or '..'; never let them escape the
+    state dir."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", s).lstrip(".")[:max_len] or "_"
+
+
+def wait_heartbeat_path(wait_id: str) -> Path:
+    return heartbeats_dir() / f"wait-{_safe_slug(wait_id)}"
+
+
+def touch_wait_heartbeat(wait_id: str) -> None:
+    with contextlib.suppress(OSError):
+        heartbeats_dir().mkdir(parents=True, exist_ok=True)
+        wait_heartbeat_path(wait_id).write_text(_utcnow(), encoding="utf-8")
+
+
+# Convenience templates over --cmd, substituting {target} from --target.
+# Deploy-CLI output shapes drift across versions — verify against your
+# installed CLI (P11) and fall back to an explicit --cmd when they do.
+_WAIT_PRESETS: dict[str, str] = {
+    # Railway: newest deployment reached SUCCESS.
+    "railway": ("railway status --json | "
+                "python3 -c \"import json,sys; d=json.load(sys.stdin); "
+                "s=[e.get('status') for e in "
+                "(d if isinstance(d, list) else d.get('deployments', [d])) "
+                "if isinstance(e, dict) and e.get('status')]; "
+                "sys.exit(0 if s and s[0] in ('SUCCESS','DEPLOYED') else 1)\""),
+    # Vercel: inspect --wait exits 0 once the deployment is READY.
+    "vercel": "vercel inspect {target} --wait",
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Watcher manager (subprocess control for `gh pr checks --watch`)
+# ─────────────────────────────────────────────────────────────────────────────
+def watch_log_path(watcher_id: str) -> Path:
+    return logs_dir() / f"watch-{watcher_id}.log"
+
+
+def spawn_watcher(pr: int, repo: str | None = None,
+                  *, dry_run: bool = False,
+                  watcher_id: str = "") -> subprocess.Popen[bytes] | None:
+    """Spawn `gh pr checks <pr> --watch` detached. Returns the Popen or None
+    in dry_run mode (used by tests and `--background --dry-run`).
+
+    With a watcher_id, gh output lands in logs/watch-<id>.log instead of
+    the void — the log's mtime is a progress signal for `p9 stuck-scan`
+    and its tail goes into termination reports (full details on failure,
+    per BRO-1701). Falls back to DEVNULL if the log can't be opened."""
+    if dry_run:
+        return None
+    cmd = ["gh", "pr", "checks", str(pr), "--watch"]
+    if repo:
+        cmd += ["--repo", repo]
+    out: Any = subprocess.DEVNULL
+    if watcher_id:
+        try:
+            logs_dir().mkdir(parents=True, exist_ok=True)
+            out = open(watch_log_path(watcher_id), "ab")
+        except OSError:
+            out = subprocess.DEVNULL
+    try:
+        return subprocess.Popen(
+            cmd,
+            stdout=out,
+            stderr=subprocess.STDOUT if out is not subprocess.DEVNULL
+            else subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    finally:
+        if out is not subprocess.DEVNULL:
+            out.close()  # child holds its own fd after fork
+
+
+def is_watcher_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _watcher_grace_seconds() -> float:
+    """How long a WATCHING/HEALING row is protected from reaping after its
+    last event. Covers the window where the watcher pid is gone but the fold
+    event may still be landing. Override via BROOMVA_P9_WATCHER_GRACE."""
+    raw = os.environ.get("BROOMVA_P9_WATCHER_GRACE", "120")
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 120.0
+
+
+def _row_pid(row: dict[str, Any]) -> int:
+    try:
+        return int((row.get("extra") or {}).get("pid", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _reconcile_dead_watcher(pr: int, repo: str, reconcile: bool) -> tuple[PRState, str]:
+    """Decide the terminal state for a dead-watcher row. Always ABANDONED
+    (frees the concurrency slot; a fresh `p9 watch` re-opens the PR since
+    `cmd_watch` always starts a new PUSHED→WATCHING edge). When ``reconcile``
+    and a repo is known, query GitHub only to enrich the reason."""
+    if not reconcile or not repo:
+        return PRState.ABANDONED, "watcher process gone (no gh reconcile)"
+    cmd = ["gh", "pr", "view", str(pr), "--json", "state,mergedAt", "--repo", repo]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return PRState.ABANDONED, "watcher gone; gh unavailable"
+    if out.returncode != 0:
+        return PRState.ABANDONED, "watcher gone; gh query failed"
+    try:
+        gh_state = (json.loads(out.stdout).get("state") or "").upper()
+    except json.JSONDecodeError:
+        return PRState.ABANDONED, "watcher gone; gh returned non-JSON"
+    if gh_state in ("MERGED", "CLOSED"):
+        return PRState.ABANDONED, f"watcher gone; PR {gh_state.lower()} on GitHub"
+    return (PRState.ABANDONED,
+            "watcher gone; PR still OPEN — re-watch with `p9 watch <pr> --adopt`")
+
+
+def reap_stale_watchers(*, grace_seconds: float | None = None,
+                        reconcile: bool = False,
+                        session_id: str | None = None) -> list[dict[str, Any]]:
+    """Reconcile WATCHING/HEALING rows whose watcher process is dead and that
+    have aged past the grace window. Without this, a crashed or closed session
+    leaves a row that permanently consumes a concurrency slot (the gap that
+    made parallel sessions collide on `max_concurrent_prs`).
+
+    Liveness-only by default (`reconcile=False`, no network) so it is cheap
+    enough to run as a preflight inside `watch`/`status`. `session_id` limits
+    reaping to one session's rows (preflight passes the live session so a
+    long-running watch never reaps another session's healthy row by mistake);
+    None scans all rows (the standalone `p9 reap`)."""
+    grace = _watcher_grace_seconds() if grace_seconds is None else grace_seconds
+    reaped: list[dict[str, Any]] = []
+    # Serialize the scan-decide-append cycle: two concurrent reaps (e.g.
+    # `p9 status` preflights in two shells) would otherwise both fold the
+    # same dead row AND both notify — duplicate pings per dead watcher
+    # (P20 finding #7). Fail open on lock contention: someone else is
+    # already reaping; skipping is safe.
+    try:
+        lock_ctx = file_lock(p9_home() / "reap.lock", timeout_s=5.0)
+        lock_ctx.__enter__()
+    except P9Error:
+        return reaped
+    try:
+        return _reap_scan(grace, reconcile, session_id, reaped)
+    finally:
+        lock_ctx.__exit__(None, None, None)
+
+
+def _is_slice_handback(row: dict[str, Any]) -> bool:
+    """A PUSHED row folded by a foreground slice expiry (BRO-2815)."""
+    return (row.get("to_state") == PRState.PUSHED.value
+            and (row.get("extra") or {}).get("termination") == "slice")
+
+
+def _reap_scan(grace: float, reconcile: bool, session_id: str | None,
+               reaped: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for row in open_prs(session_id=session_id):
+        state = PRState(row["to_state"])
+        if _is_slice_handback(row):
+            # BRO-2815: a live session re-runs the watch within seconds. One
+            # still parked here after a whole Bash cap stopped re-running —
+            # the same orphan a killed foreground watch used to leave.
+            if _iso_age_seconds(row.get("ts", "")) < max(
+                    grace, BASH_CALL_CAP_SECONDS):
+                continue
+        elif state not in (PRState.WATCHING, PRState.HEALING):
+            continue
+        pid = _row_pid(row)
+        if pid > 0 and is_watcher_alive(pid):
+            continue  # healthy watcher — leave it
+        if _iso_age_seconds(row.get("ts", "")) < grace:
+            continue  # too fresh — the fold may still land
+        # `_row_repo` gates the GitHub query: asking "is #N merged?" of the
+        # *ambient* repo, for a row that recorded none, would fold it terminal
+        # on a foreign PR's state. It is also the key the fold is written to,
+        # so the fold always lands on the row it retires and the slot is freed.
+        repo = _row_repo(row)
+        pr = row["pr"]
+        handback = _is_slice_handback(row)
+        to_state, reason = _reconcile_dead_watcher(pr, repo, reconcile)
+        if handback:
+            reason = (f"slice hand-back not re-run within "
+                      f"{BASH_CALL_CAP_SECONDS}s ({reason})")
+        event = PRStateEvent(
+            ts=_utcnow(), pr=pr, repo=repo,
+            from_state=state.value, to_state=to_state.value,
+            watcher_id="reap", session_id=row.get("session_id", ""),
+            extra={"reason": reason, "dead_pid": pid,
+                   **({"log": (row.get("extra") or {}).get("log")}
+                      if (row.get("extra") or {}).get("log") else {})},
+        )
+        # CAS (BRO-2374): `row` is a snapshot. Between reading it and writing
+        # here, a `watch --adopt` or `rearm` may have handed the key to a live
+        # replacement — reaping then folds the *replacement* terminal on the
+        # strength of the dead watcher's pid.
+        if not append_state_event(event, expect_owner=_owner_of(row)):
+            continue
+        # Termination invariant (BRO-1701): SIGKILL and machine-death can't be
+        # trapped by the watcher itself — the reap path is where those become
+        # a report + notification instead of a silent slot leak.
+        # A slow re-run (the agent was busy between slices) is routine, not
+        # news: the next `p9 watch` simply reopens the PR. No phone buzz.
+        emit_termination_report(
+            pr_termination_report(
+                dataclasses.asdict(event),
+                cause=("reaped:slice-handback" if handback
+                       else "reaped:dead-watcher")),
+            do_notify=not handback)
+        enriched = dict(row)
+        enriched.update(to_state=to_state.value, reason=reason)
+        reaped.append(enriched)
+    return reaped
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Concurrency
+# ─────────────────────────────────────────────────────────────────────────────
+def enforce_concurrency_ceiling(
+    policy: PolicyConfig, session_id: str | None = None,
+    exclude: tuple[str, int] | None = None,
+    repo: str | None = None,
+) -> None:
+    """Enforce ``max_concurrent_prs``.
+
+    With ``session_id`` set (production: ``cmd_watch`` passes the live
+    session), the count is scoped to that session — N parallel agents can
+    each hold their own watcher. ``session_id=None`` keeps the global count
+    (direct/legacy callers and tests).
+
+    ``repo`` (BRO-1988): scope the count to one repo. Callers do not decide
+    this on their own — ``cmd_watch`` reads
+    ``ci_watch.max_concurrent_prs_scope`` from ``.control/policy.yaml``
+    (default ``repo``) and passes the result, because the meaning of a
+    control-metalayer setpoint is policy's to set, not this function's.
+    ``repo=None`` counts across repos (scope ``global``, and the behavior
+    every pre-BRO-1988 caller got).
+
+    Why ``repo`` is the default: counting globally let an open PR in one repo
+    refuse ``p9 watch`` in an unrelated repo, and since ``watch`` is the only
+    transition into GREEN, that made the entire lifecycle unreachable there —
+    a worse failure than one extra concurrent watcher. The tradeoff is real
+    and is why the knob exists: at ``max_concurrent_prs: 1`` across N repos a
+    session now holds N watchers, and the defer-into-wait-queue discipline
+    stops firing cross-repo.
+
+    ``exclude`` (BRO-1701): the ``(repo, pr)`` about to be watched. The
+    ceiling bounds *distinct* in-flight PRs; a re-watch replaces its own
+    row (open_prs keys by (repo, pr)), so without the exclusion a PR's own
+    non-terminal row — e.g. a RED fold from a transient gh error — would
+    block its own re-watch at max_concurrent_prs=1."""
+    rows = open_prs(session_id=session_id)
+    # BRO-2305: bound watcher work in flight, not open PRs.
+    rows = [r for r in rows
+            if counts_against_ceiling(PRState(r["to_state"]))]
+    if repo is not None:
+        want = repo_key(repo)
+        rows = [r for r in rows if repo_key(r.get("repo", "")) == want]
+    if exclude is not None:
+        ex = (repo_key(exclude[0]), exclude[1])
+        rows = [r for r in rows
+                if (repo_key(r.get("repo", "")), r["pr"]) != ex]
+    open_count = len(rows)
+    if open_count >= policy.ci_watch.max_concurrent_prs:
+        scope = f" for session {session_id}" if session_id else ""
+        if repo is not None:
+            scope += f" in {canonical_repo(repo) or 'repo-unknown'}"
+        raise ConcurrencyCeilingError(
+            f"max_concurrent_prs={policy.ci_watch.max_concurrent_prs} "
+            f"already in flight ({open_count} open{scope})"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Subcommand handlers
+# ─────────────────────────────────────────────────────────────────────────────
+def cmd_doctor(_args: argparse.Namespace) -> int:
+    problems: list[str] = []
+    # 1. gh present + authed
+    try:
+        out = subprocess.run(
+            ["gh", "auth", "status"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        if out.returncode != 0:
+            problems.append(f"gh auth status non-zero: {out.stderr.strip()[:200]}")
+    except FileNotFoundError:
+        problems.append("gh CLI not installed")
+    except subprocess.TimeoutExpired:
+        problems.append("gh auth status timed out")
+
+    # 2. State directory writable
+    try:
+        p9_home().mkdir(parents=True, exist_ok=True)
+        probe = p9_home() / ".doctor-probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except OSError as e:
+        problems.append(f"state directory not writable: {e}")
+
+    # 3. Policy blocks present
+    try:
+        load_policy()
+    except PolicyError as e:
+        problems.append(f"policy: {e}")
+
+    # 4. Rubric file present (if absent, builtin still works but we warn)
+    if not rubric_md_path().exists():
+        problems.append(
+            f"references/scoring-rubric.md missing at {rubric_md_path()} "
+            f"(builtin rubric still available but markdown is the human-canonical source)"
+        )
+
+    # 5. Notify config parses; report configured channel count (BRO-1701).
+    channels, cfg_err = _load_notify_config()
+    if cfg_err:
+        problems.append(f"notify: {cfg_err}")
+    elif not channels:
+        # Informational, not a problem: the notify.jsonl audit floor still
+        # applies, but nothing reaches a phone until a channel is configured.
+        print("p9 doctor: note — no notify channels configured "
+              f"(add {notify_config_path()} or set BROOMVA_P9_NTFY_TOPIC)")
+
+    # 6. Logs dir writable (watch logs + wait logs land here) — probe an
+    # actual write; mkdir(exist_ok=True) proves nothing for an existing dir.
+    try:
+        logs_dir().mkdir(parents=True, exist_ok=True)
+        probe = logs_dir() / ".doctor-probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except OSError as e:
+        problems.append(f"logs directory not writable: {e}")
+
+    if not problems:
+        print("p9 doctor: ok")
+        return EXIT_OK
+    print("p9 doctor: degraded")
+    for p in problems:
+        print(f"  - {p}")
+    # Policy errors are exit 2 (fail-closed); other degradations exit 1.
+    if any(p.startswith("policy:") for p in problems):
+        return EXIT_POLICY_ERROR
+    return EXIT_DEGRADED
+
+
+def cmd_abandon(args: argparse.Namespace) -> int:
+    """Mark a PR as ABANDONED.
+
+    Idempotent on already-terminal states. Emits a terminal-state event so
+    `max_concurrent_prs` accounting is freed and `p9 cleanup` doesn't
+    re-flag it.
+    """
+    pr = int(args.pr)
+    # Resolve the repo BEFORE reading: the read key and the write key must be
+    # the same, or abandon folds a terminal row under a key nothing tracks and
+    # leaves the real row open forever (BRO-1988).
+    repo = resolve_repo(args.repo)
+    state = current_pr_state(pr, repo)
+    if state is None:
+        print(f"PR #{pr} ({repo or 'repo-unknown'}): no state to abandon",
+              file=sys.stderr)
+        return EXIT_DEGRADED
+    if is_terminal(state):
+        print(f"PR #{pr} ({repo or 'repo-unknown'}): already terminal "
+              f"({state.value}); no-op")
+        return EXIT_OK
+    append_state_event(PRStateEvent(
+        ts=_utcnow(), pr=pr, repo=repo,
+        from_state=state.value,
+        to_state=PRState.ABANDONED.value,
+        watcher_id="abandon",
+        extra={"reason": args.reason or "manual abandon"},
+    ))
+    print(f"PR #{pr} ({repo or 'repo-unknown'}): {state.value} → ABANDONED")
+    return EXIT_OK
+
+
+def cmd_cleanup(args: argparse.Namespace) -> int:
+    """Drain orphan watchers by polling GitHub for each open row's true state.
+
+    For every PR in a non-terminal local state, queries
+    `gh pr view --json state,mergedAt`. If GitHub reports MERGED or CLOSED,
+    appends a terminal ABANDONED event with the reason. If GitHub reports
+    OPEN, leaves the row alone. PRs that fail to query are reported but
+    not abandoned (no false-positive cleanup).
+    """
+    rows = open_prs()
+    if not rows:
+        print("p9 cleanup: no open PRs")
+        return EXIT_OK
+    cleaned = 0
+    skipped = 0
+    for row in rows:
+        pr = row["pr"]
+        # _row_repo, never a guess: cleanup folds rows terminal off a
+        # GitHub answer, and "is #<pr> merged?" asked of the wrong repo is a
+        # false-positive cleanup — the one thing this command promises not to
+        # do. A row that names no repo is skipped, never guessed at.
+        repo = _row_repo(row)
+        if not repo:
+            print(f"  #{pr}: no repo recorded; leaving as {row['to_state']} "
+                  f"(cannot ask GitHub about a PR whose repo is unknown)")
+            skipped += 1
+            continue
+        cmd = ["gh", "pr", "view", str(pr), "--json", "state,mergedAt",
+               "--repo", repo]
+        result = subprocess.run(cmd, capture_output=True, text=True,
+                                timeout=30, check=False)
+        if result.returncode != 0:
+            print(f"  #{pr}: cannot query gh; leaving as {row['to_state']} "
+                  f"({result.stderr.strip()[:80]})")
+            skipped += 1
+            continue
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            print(f"  #{pr}: gh returned non-JSON; leaving as {row['to_state']}")
+            skipped += 1
+            continue
+        gh_state = (data.get("state") or "").upper()
+        from_state = PRState(row["to_state"])
+        if gh_state in ("MERGED", "CLOSED"):
+            reason = ("merged outside p9" if gh_state == "MERGED"
+                      else "closed outside p9")
+            append_state_event(PRStateEvent(
+                ts=_utcnow(), pr=pr, repo=repo,
+                from_state=from_state.value,
+                to_state=PRState.ABANDONED.value,
+                watcher_id="cleanup",
+                extra={"reason": reason, "gh_state": gh_state},
+            ))
+            print(f"  #{pr}: {from_state.value} → ABANDONED ({reason})")
+            cleaned += 1
+        else:
+            print(f"  #{pr}: still OPEN; leaving as {from_state.value}")
+    print(f"p9 cleanup: drained {cleaned}, skipped {skipped}")
+    return EXIT_OK
+
+
+def cmd_auto_merge(args: argparse.Namespace) -> int:
+    """Auto-merge actuator. Closes the gap between MERGE_READY signal and
+    actual `gh pr merge` execution.
+
+    Flow:
+      1. Load policy → bail if auto_merge.enabled is false.
+      2. Verify PR is in MERGE_READY state.
+      3. Fetch branch + touched paths via `gh pr view`.
+      4. Resolve the AUTHORITATIVE policy: the PR's base branch copy, never
+         the checkout's, so a PR cannot be judged by its own policy edit
+         (BRO-2591).
+      5. Legacy policy (no `gates`): match prefix/path rules → action.
+         Gated policy: re-verify every gate against GitHub NOW (the
+         MERGE_READY row is history, and `--no-verify` can write it) → auto
+         iff all pass and no blocking rule matches.
+      6. auto → re-read the base: if it moved off the pinned commit, or the PR
+         was retargeted, block. Otherwise `gh pr merge` pinned to the verified
+         head SHA (or print the plan in --dry-run), transition MERGE_READY →
+         MERGED, return 0.
+         Otherwise → idempotent self-transition recording every failed gate,
+         return 7 (EXIT_AUTO_MERGE_BLOCKED).
+    """
+    pr = int(args.pr)
+    repo = resolve_repo(args.repo)
+    policy = load_policy()
+    if not policy.auto_merge.enabled:
+        print("auto_merge.enabled=false in policy; refusing to merge", file=sys.stderr)
+        return EXIT_POLICY_ERROR
+
+    # Repo-qualified read (BRO-1988): merging on another repo's MERGE_READY
+    # would be the worst possible shadowing outcome.
+    state = current_pr_state(pr, repo)
+    if state != PRState.MERGE_READY:
+        print(
+            f"PR #{pr} ({repo or 'repo-unknown'}) not in MERGE_READY "
+            f"(current={state.value if state else 'UNKNOWN'}); "
+            f"call `p9 merge-ready` first",
+            file=sys.stderr,
+        )
+        return EXIT_DEGRADED
+
+    listing = _gh_pr_listing(pr, repo)
+    branch, paths = listing.branch, list(listing.paths)
+    decision = decide_auto_merge(policy.auto_merge, pr=pr, repo=repo, listing=listing)
+    action, reason = decision["action"], decision["reason"]
+    am = decision["policy"] or policy.auto_merge
+
+    if action != "auto":
+        # Block: emit idempotent state event with rationale; never merge.
+        append_state_event(PRStateEvent(
+            ts=_utcnow(),
+            pr=pr, repo=repo,
+            from_state=PRState.MERGE_READY.value,
+            to_state=PRState.MERGE_READY.value,
+            watcher_id="auto-merge",
+            extra={"auto_merge": {"action": action, "reason": reason,
+                                  "branch": branch, "paths": list(paths)[:20],
+                                  "policy_source": decision["source"],
+                                  "gates": decision["gates"]}},
+        ))
+        print(f"auto-merge blocked: action={action}; reason={reason}",
+              file=sys.stderr)
+        if decision["gates"]:
+            print(_format_gate_results(decision["gates"]), file=sys.stderr)
+        return EXIT_AUTO_MERGE_BLOCKED
+
+    # Auto path
+    if args.dry_run:
+        if decision["gates"]:
+            print(_format_gate_results(decision["gates"]))
+        print(f"auto-merge dry-run: would merge PR #{pr} ({branch}) via "
+              f"`gh pr merge --{am.merge_method}`")
+        return EXIT_OK
+
+    if decision["base_sha"]:
+        # --match-head-commit pins the head; nothing pins the base. If the base
+        # moved while the gates ran, the verdict is about a combination GitHub
+        # would not be merging, so refuse and let the next pass re-judge it.
+        now = _gh_branch_sha(repo, decision["base"])
+        retargeted = _gh_pr_base(pr, repo) != decision["base"]
+        if now != decision["base_sha"] or retargeted:
+            print(f"auto-merge blocked: the base moved or the PR was retargeted "
+                  f"during evaluation ({decision['base']}@{decision['base_sha'][:12]} "
+                  f"-> {(now or 'unreadable')[:12]}); re-run", file=sys.stderr)
+            return EXIT_AUTO_MERGE_BLOCKED
+
+    rc = _gh_pr_merge(
+        pr, repo,
+        method=am.merge_method,
+        delete_branch=am.delete_branch,
+        match_head=decision["head_sha"],
+    )
+    if rc != 0:
+        print(f"gh pr merge exited {rc}; PR not merged", file=sys.stderr)
+        return EXIT_EXTERNAL_ERROR
+
+    append_state_event(PRStateEvent(
+        ts=_utcnow(),
+        pr=pr, repo=repo,
+        from_state=PRState.MERGE_READY.value,
+        to_state=PRState.MERGED.value,
+        watcher_id="auto-merge",
+        extra={"auto_merge": {"action": "auto", "reason": reason,
+                              "branch": branch,
+                              "method": am.merge_method,
+                              "policy_source": decision["source"],
+                              "gates": decision["gates"]}},
+    ))
+    print(f"auto-merge: PR #{pr} merged ({branch})")
+    return EXIT_OK
+
+
+def decide_auto_merge(local: AutoMergePolicy, *, pr: int, repo: str,
+                      listing: PRListing) -> dict:
+    """One decision for both `auto-merge` and `gate-check`.
+
+    Returns {action, reason, source, policy, gates, head_sha, base, base_sha};
+    `gates` is a list of {gate, ok, reason} dicts in gated mode and [] in
+    legacy mode, and base/base_sha are set only on the gated path.
+    """
+    branch, paths = listing.branch, list(listing.paths)
+    source = "local policy"
+    am: AutoMergePolicy | None = local
+    if not os.environ.get("BROOMVA_P9_POLICY"):
+        base = _gh_pr_base(pr, repo)
+        base_sha = _gh_branch_sha(repo, base) if base else None
+        if not base or not base_sha:
+            return {"action": "require_human", "source": "unresolved", "policy": None,
+                    "reason": "could not read the PR's base branch to load its policy",
+                    "gates": [], "head_sha": None, "base": None, "base_sha": None}
+        # The policy is read AT the base commit the gates will judge against,
+        # and the merge refuses if the branch has moved off it, so the policy,
+        # the facts and the merge all describe one base.
+        am, source = authoritative_auto_merge_policy(local, repo, base_sha, paths)
+    if am is None:
+        return {"action": "require_human", "reason": source, "source": source,
+                "policy": None, "gates": [], "head_sha": None, "base": None, "base_sha": None}
+    if not am.enabled:
+        return {"action": "notify", "source": source, "policy": am, "gates": [],
+                "head_sha": None, "base": None, "base_sha": None,
+                "reason": f"auto_merge.enabled=false in the governing policy ({source})"}
+
+    if am.gates is None:
+        action, reason = match_auto_merge_action(am, branch=branch, paths_touched=paths)
+        head_sha = None
+        if action == "auto":
+            # The MERGE_READY row is history, and `merge-ready --no-verify` can
+            # write it. Re-read the merge predicate now, as the gated path does.
+            v = merge_ready_verdict(pr, repo)
+            head_sha = v.get("head_sha") or None
+            if not v["ready"]:
+                action, reason = "notify", f"{reason}, but not merge-ready now: {v['reason']}"
+            elif not head_sha:
+                action, reason = "notify", f"{reason}, but the head SHA could not be read"
+            elif head_sha != listing.head_sha:
+                action, reason = "notify", (f"{reason}, but the head moved while it was "
+                                            f"judged ({listing.head_sha[:12]} -> "
+                                            f"{head_sha[:12]}); re-run")
+        return {"action": action, "reason": reason, "source": source, "policy": am,
+                "gates": [], "head_sha": head_sha, "base": None, "base_sha": None}
+
+    # Gated: rules can only block. Probe them with an "auto" default, so a
+    # non-auto answer can only have come from a rule match.
+    overlay_action, overlay_reason = match_auto_merge_action(
+        dataclasses.replace(am, default_action="auto"),
+        branch=branch, paths_touched=paths)
+    facts = gather_pr_gate_facts(pr, repo, am.gates, listing=listing,
+                                 base_sha=None if os.environ.get("BROOMVA_P9_POLICY")
+                                 else base_sha)
+    results = evaluate_merge_gates(am.gates, facts)
+    gates = [dataclasses.asdict(r) for r in results]
+    failed = [r for r in results if not r.ok]
+    if overlay_action != "auto":
+        action, reason = overlay_action, f"blocking rule: {overlay_reason}"
+    elif not facts.head_sha or facts.head_sha != listing.head_sha:
+        # The rules and the policy-introduction check read the listing; the
+        # gates read the facts. Both must describe the head that gets merged.
+        action, reason = "notify", (f"the head moved while the PR was judged "
+                                    f"({listing.head_sha[:12] or '?'} -> "
+                                    f"{facts.head_sha[:12] or '?'}); re-run")
+    elif failed:
+        action = "notify"
+        reason = "; ".join(f"{r.gate}: {r.reason}" for r in failed)
+    else:
+        action, reason = "auto", "every merge gate passes"
+    return {"action": action, "reason": reason, "source": source, "policy": am,
+            "gates": gates, "head_sha": facts.head_sha or None,
+            "base": facts.base, "base_sha": facts.base_sha or None}
+
+
+def _format_gate_results(gates: list[dict]) -> str:
+    return "\n".join(f"  {'PASS' if g['ok'] else 'FAIL'}  {g['gate']:<22} {g['reason']}"
+                     for g in gates)
+
+
+def cmd_gate_check(args: argparse.Namespace) -> int:
+    """Read-only: judge a PR against the governing policy's merge gates, without
+    touching state. Exit 0 iff the decision is `auto` now: every gate passes
+    AND no blocking rule matches. `auto-merge` additionally needs the PR in
+    MERGE_READY (watch -> merge-ready)."""
+    pr = int(args.pr)
+    repo = resolve_repo(args.repo)
+    policy = load_policy()
+    listing = _gh_pr_listing(pr, repo)
+    branch = listing.branch
+    d = decide_auto_merge(policy.auto_merge, pr=pr, repo=repo, listing=listing)
+    if args.json:
+        print(json.dumps({k: v for k, v in d.items() if k != "policy"}))
+    else:
+        print(f"PR #{pr} ({branch}) — {d['action'].upper()}: {d['reason']}")
+        print(f"  policy: {d['source']}")
+        if d["gates"]:
+            print(_format_gate_results(d["gates"]))
+    return EXIT_OK if d["action"] == "auto" else EXIT_AUTO_MERGE_BLOCKED
+
+
+def cmd_p20_record(args: argparse.Namespace) -> int:
+    """Record a P20 verdict on a PR as the marker the merge gate reads.
+
+    `--sha` is the commit the reviewers READ, not whatever the head is now: a
+    fix pushed after the review is unreviewed code. If the head has moved past
+    it, the gate's carry-forward rule decides whether the verdict still covers
+    the head (only commits that touch no reviewed or PR file carry)."""
+    pr = int(args.pr)
+    repo = resolve_repo(args.repo)
+    verdict = args.verdict.upper()
+    strata = [s.strip().upper() for s in args.strata.split(",") if s.strip()]
+    if not strata or not set(strata) <= set(_P20_STRATA):
+        print(f"--strata must be a subset of {','.join(_P20_STRATA)}", file=sys.stderr)
+        return EXIT_USAGE
+    if not 0 <= args.score <= 10:
+        print("--score must be 0..10", file=sys.stderr)
+        return EXIT_USAGE
+    if verdict == "PASS" and args.score < _P20_PASS_FLOOR:
+        print(f"a PASS needs score >= {_P20_PASS_FLOOR}; record FAIL instead",
+              file=sys.stderr)
+        return EXIT_USAGE
+    head = (args.sha or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", head):
+        print("--sha must be the full 40-hex commit the reviewers read", file=sys.stderr)
+        return EXIT_USAGE
+    if args.note and "p20-verdict" in args.note.lower():
+        print("--note must not contain P20-VERDICT: the gate reads only the "
+              "first line, and a quoted verdict below it invites misreading",
+              file=sys.stderr)
+        return EXIT_USAGE
+    ordered = ",".join(s for s in _P20_STRATA if s in strata)
+    body = f"P20-VERDICT: {verdict} score={args.score} strata={ordered} sha={head}"
+    if args.note:
+        body += f"\n\n{args.note}"
+    if args.dry_run:
+        print(body)
+        return EXIT_OK
+    out = subprocess.run(["gh", "pr", "comment", str(pr), "--repo", repo,
+                          "--body-file", "-"],
+                         input=body, capture_output=True, text=True,
+                         timeout=60, check=False)
+    if out.returncode != 0:
+        print(f"gh pr comment failed: {out.stderr.strip()[:200]}", file=sys.stderr)
+        return EXIT_EXTERNAL_ERROR
+    print(f"recorded on PR #{pr}: {body.splitlines()[0]}")
+    return EXIT_OK
+
+
+def _gh_pr_base(pr: int, repo: str) -> str:
+    view = _gh_json(["gh", "pr", "view", str(pr), "--repo", repo,
+                     "--json", "baseRefName"])
+    return (view.get("baseRefName") or "") if isinstance(view, dict) else ""
+
+
+def _gh_branch_sha(repo: str, branch: str) -> str | None:
+    import urllib.parse
+    # Encoded: gh treats `#` as a fragment, so branches/main#x would read main.
+    data = _gh_json(["gh", "api",
+                     f"repos/{repo}/branches/{urllib.parse.quote(branch, safe='')}"])
+    sha = ((data or {}).get("commit") or {}).get("sha") if isinstance(data, dict) else None
+    return sha or None
+
+
+@dataclass(frozen=True)
+class PRListing:
+    """One read of what a PR changes. `paths` holds every current path AND
+    every pre-rename path, because renaming AGENTS.md away must not carry it
+    out of the governance tier. `unmeasured` holds every file that reports 0
+    changed lines (a binary, or a rename that could hide one)."""
+    branch: str
+    head_sha: str
+    paths: tuple[str, ...]
+    unmeasured: tuple[str, ...]
+
+
+def _gh_pr_listing(pr: int, repo: str) -> PRListing:
+    """The COMPLETE listing or a P9Error. `gh pr view` caps files at 100 and
+    has no pre-rename path, so the REST endpoint is paginated and its row count
+    checked against changedFiles. A path rule, a governance path or a policy
+    file on page two, or behind a rename, must not be invisible (BRO-2591)."""
+    if not repo or "/" not in repo:
+        raise P9Error(f"PR #{pr}: a repo is required to list its changed files")
+    cmd = ["gh", "pr", "view", str(pr), "--repo", repo,
+           "--json", "headRefName,headRefOid,changedFiles",
+           "-q", "{branch: .headRefName, head: .headRefOid, changed: .changedFiles}"]
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+    if out.returncode != 0:
+        raise P9Error(f"gh pr view failed: {out.stderr.strip()[:200]}")
+    try:
+        data = json.loads(out.stdout)
+    except json.JSONDecodeError as e:
+        raise P9Error(f"gh pr view returned non-JSON: {e}") from e
+    changed = data.get("changed")
+    rows = _gh_paginated_list([
+        "gh", "api", "--paginate", f"repos/{repo}/pulls/{pr}/files", "--jq",
+        '.[] | [.filename, (.previous_filename // ""), .status, (.changes|tostring)] | @tsv'])
+    if rows is None or not isinstance(changed, int) or len(rows) != changed:
+        raise P9Error(f"PR #{pr}: could not list all changed files "
+                      f"(got {len(rows) if rows is not None else 'none'} of {changed}); "
+                      f"refusing to judge an incomplete diff")
+    # The head and the rows are two reads; a push between them would pair one
+    # head with another commit's files. Re-read the head and require it equal.
+    again = _gh_json(["gh", "pr", "view", str(pr), "--repo", repo, "--json", "headRefOid"])
+    if not isinstance(again, dict) or again.get("headRefOid") != data.get("head"):
+        raise P9Error(f"PR #{pr}: the head moved while its files were listed; re-run")
+    paths: list[str] = []
+    unmeasured: list[str] = []
+    for row in rows:
+        cols = row.split("\t")
+        if len(cols) != 4:
+            raise P9Error(f"PR #{pr}: unparseable file row {row[:120]!r}")
+        name, prev, status, changes = cols
+        paths.append(name)
+        if prev:
+            paths.append(prev)
+        # A 0-line row is binary (or empty), whatever its status. A pure rename
+        # also shows 0 lines and cannot be told apart from a renamed binary
+        # without fetching both blobs, so it counts as unmeasured too.
+        if changes == "0":
+            unmeasured.append(name)
+    return PRListing(branch=str(data.get("branch") or ""),
+                     head_sha=str(data.get("head") or ""),
+                     paths=tuple(dict.fromkeys(paths)),
+                     unmeasured=tuple(unmeasured))
+
+
+def _gh_paginated_list(cmd: list[str]) -> list[str] | None:
+    """One value per stdout line (gh api --paginate --jq '.[].x')."""
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0:
+        return None
+    return [line for line in out.stdout.splitlines() if line.strip()]
+
+
+def _gh_pr_merge(pr: int, repo: str, *, method: str, delete_branch: bool,
+                 match_head: str | None = None) -> int:
+    """Invoke `gh pr merge` with the configured method. Returns exit code.
+    `match_head` pins the merge to the SHA the gates verified: a push that
+    lands between the verdict and the merge makes GitHub refuse it."""
+    cmd = ["gh", "pr", "merge", str(pr), f"--{method}"]
+    if delete_branch:
+        cmd.append("--delete-branch")
+    if match_head:
+        cmd += ["--match-head-commit", match_head]
+    if repo:
+        cmd += ["--repo", repo]
+    return subprocess.run(cmd, check=False).returncode
+
+
+def cmd_conformance(args: argparse.Namespace) -> int:
+    """Run the full pytest battery (unit + integration + chaos).
+
+    Used as the CI-lane validator and as a local pre-merge check. Honors
+    BROOMVA_P9_PYTEST env var (default: `python3 -m pytest`) so callers can
+    pin a specific interpreter or test runner.
+    """
+    runner = os.environ.get("BROOMVA_P9_PYTEST", f"{sys.executable} -m pytest")
+    tests_dir = Path(__file__).resolve().parent.parent / "tests"
+    if not tests_dir.exists():
+        print(f"p9 conformance: tests directory not found at {tests_dir}",
+              file=sys.stderr)
+        return EXIT_DEGRADED
+    cmd = runner.split() + [str(tests_dir)]
+    if args.verbose:
+        cmd.append("-v")
+    if args.k:
+        cmd += ["-k", args.k]
+    print(f"p9 conformance: running {' '.join(cmd)}")
+    rc = subprocess.run(cmd, check=False).returncode
+    if rc == 0:
+        print("p9 conformance: ok")
+        return EXIT_OK
+    print(f"p9 conformance: failed (pytest exit {rc})", file=sys.stderr)
+    return EXIT_DEGRADED
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    """Watch CI on a PR.
+
+    Default behavior (PR E onwards): foreground — block on
+    `gh pr checks --watch`, then fold the subprocess exit code into a state
+    transition (WATCHING → GREEN on exit 0, WATCHING → RED_UNCLASSIFIED
+    otherwise). Where a finished background task wakes the session, callers
+    wrap this in `run_in_background` so the notification fires when the
+    *whole* watch+fold has finished. Where it does not (Paseo, see
+    `host_profile`), the wait is sliced under the Bash cap: a slice that ends
+    with CI still running folds back to PUSHED and returns EXIT_PENDING, and
+    the agent runs the watch again in the foreground (BRO-2815).
+
+    --detach reverts to the old fire-and-forget behavior (no fold; the
+    caller is responsible for polling state). --background and --block are
+    aliases for the default; they exist so historic AGENTS.md guidance
+    using `p9 watch <pr> --background` keeps working.
+    """
+    policy = load_policy(validate_auto_merge=False)
+    if not policy.ci_watch.enabled:
+        print("ci_watch.enabled=false in policy; refusing to watch", file=sys.stderr)
+        return EXIT_POLICY_ERROR
+    t0 = time.monotonic()  # the slice bounds the whole call, not just gh
+    sid = current_session_id()
+    pr = int(args.pr)
+    # One resolution for the whole invocation (BRO-1988): the de-dup read, the
+    # ceiling count, the WATCHING row and the terminal fold all key on it.
+    repo = resolve_repo(args.repo)
+
+    # Preflight: reap *this session's* dead-watcher rows so a prior crashed
+    # watch doesn't permanently consume the slot we're about to claim.
+    reap_stale_watchers(reconcile=False, session_id=sid)
+
+    # De-dup: refuse to stack a second watcher on a PR that already has one,
+    # unless it is provably dead (orphan recovery) or the caller overrides.
+    adopt = bool(getattr(args, "adopt", False))
+    force = bool(getattr(args, "force", False))
+    existing = latest_row(pr, repo)
+    if existing and PRState(existing["to_state"]) in (PRState.WATCHING, PRState.HEALING):
+        epid = _row_pid(existing)
+        alive = epid > 0 and is_watcher_alive(epid)
+        fresh = _iso_age_seconds(existing.get("ts", "")) < _watcher_grace_seconds()
+        if alive and not force:
+            print(
+                f"PR #{pr} ({repo or 'repo-unknown'}) already has a live "
+                f"watcher (pid={epid}, "
+                f"session={existing.get('session_id', '') or 'legacy'}). "
+                f"Refusing to double-watch; pass --force to supersede.",
+                file=sys.stderr,
+            )
+            return EXIT_DEGRADED
+        if not alive and fresh and not (adopt or force):
+            print(
+                f"PR #{pr} watcher pid={epid} is gone but the row is fresh "
+                f"(<{int(_watcher_grace_seconds())}s); the fold may still land. "
+                f"Re-run with --adopt to supersede now.",
+                file=sys.stderr,
+            )
+            return EXIT_DEGRADED
+        # Supersede the stale/forced row to free the slot before re-watching.
+        append_state_event(PRStateEvent(
+            ts=_utcnow(), pr=pr, repo=repo or "",
+            from_state=existing["to_state"], to_state=PRState.ABANDONED.value,
+            watcher_id="watch-supersede", session_id=existing.get("session_id", ""),
+            extra={"reason": "superseded by re-watch",
+                   "dead_pid": epid, "forced": force, "adopt": adopt},
+        ))
+
+    # Scope comes from policy (BRO-1988), not from this code's opinion.
+    # `repo or None` on top of that: with no resolvable repo, identity is
+    # ambiguous, so fall back to the cross-repo count rather than silently
+    # disabling the ceiling (a repo-less scope would count ~nothing).
+    ceiling_repo = (repo or None
+                    if policy.ci_watch.max_concurrent_prs_scope == "repo"
+                    else None)
+    enforce_concurrency_ceiling(policy, session_id=sid, repo=ceiling_repo,
+                                exclude=(repo, pr))
+    watcher_id = uuid.uuid4().hex[:12]
+
+    # Termination invariant (BRO-1701): EVERY exit path — green, red, signal,
+    # unexpected exception — folds a state event, emits a termination report
+    # (state + next action), and notifies. A killed watcher must not die
+    # silently. Handlers go up BEFORE the WATCHING row is written so there is
+    # no registered-but-unguarded window (P20 finding #4); the terminal fold
+    # runs AFTER handlers are restored so a late signal cannot double-fold
+    # (P20 finding #3). SIGKILL is untrappable by design; that path is
+    # covered by `p9 reap` / `p9 rearm`, which emit the same report shape.
+    proc: subprocess.Popen[bytes] | None = None
+    pid = 0
+    log_path: str | None = None
+    row_written = False
+    foreground = not (args.detach or args.dry_run)
+    slice_s = resolve_slice(getattr(args, "slice", None)) if foreground else None
+    if args.detach and not host_profile()["background_wakes"]:
+        print("p9: this host does not wake an idle session when a background "
+              f"task ends; nothing will tell you PR #{pr} settled — poll "
+              f"`p9 status --pr {pr}`, or watch it in the foreground instead",
+              file=sys.stderr)
+    outcome: tuple[PRState, str, dict[str, Any]] | None = None
+    reraise: BaseException | None = None
+    fold_rejected = False
+
+    def _on_signal(signum: int, _frame: Any) -> None:
+        raise _WaitInterrupted(signum)
+
+    prev_handlers: dict[int, Any] = {}
+    if foreground:
+        for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            with contextlib.suppress(OSError, ValueError):
+                prev_handlers[s] = signal.signal(s, _on_signal)
+    try:
+        proc = spawn_watcher(pr, repo, dry_run=args.dry_run,
+                             watcher_id=watcher_id)
+        pid = proc.pid if proc else 0
+        log_path = str(watch_log_path(watcher_id)) if proc is not None else None
+        append_state_event(PRStateEvent(
+            ts=_utcnow(),
+            pr=pr,
+            repo=repo or "",
+            from_state=PRState.PUSHED.value,
+            to_state=PRState.WATCHING.value,
+            watcher_id=watcher_id,
+            attempt=0,
+            session_id=sid,
+            extra={"pid": pid, "dry_run": args.dry_run, "detach": args.detach,
+                   **({"log": log_path} if log_path else {})},
+        ))
+        row_written = True
+        if args.json:
+            print(json.dumps({
+                "watcher_id": watcher_id,
+                "pid": pid,
+                "pr": pr,
+                "repo": repo,
+                "mode": "detach" if args.detach else "foreground",
+            }), flush=True)
+        else:
+            mode = "detach" if args.detach else "foreground"
+            print(f"watcher_id={watcher_id} pid={pid} pr={pr} repo={repo} "
+                  f"mode={mode}", flush=True)
+
+        if not foreground or proc is None:
+            # Detach / dry-run: do NOT block; caller polls state.jsonl.
+            return EXIT_OK
+
+        try:
+            rc = (proc.wait(timeout=max(1.0, slice_s - (time.monotonic() - t0)))
+                  if slice_s else proc.wait())
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(Exception):
+                proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                with contextlib.suppress(Exception):
+                    proc.kill()
+            except Exception:  # noqa: BLE001 — cleanup only
+                pass
+            outcome = (PRState.PUSHED, "slice-expired", {
+                "reason": (f"CI still pending after the {slice_s:.0f}s "
+                           "foreground slice"),
+                "slice_seconds": slice_s, "termination": "slice",
+            })
+        else:
+            next_state = PRState.GREEN if rc == 0 else PRState.RED_UNCLASSIFIED
+            outcome = (next_state, "gh-exit",
+                       {"gh_exit_code": rc, "folded_by": "p9 watch"})
+    except _WaitInterrupted as exc:
+        if proc is not None:
+            with contextlib.suppress(Exception):
+                proc.terminate()
+        signame = signal.Signals(exc.signum).name
+        outcome = (PRState.ABANDONED, f"killed:{signame}", {
+            "reason": f"watcher killed by {signame}",
+            "termination": "killed", "dead_pid": pid,
+        })
+    except BaseException as exc:  # unexpected — the invariant still holds
+        if proc is not None:
+            with contextlib.suppress(Exception):
+                proc.terminate()
+        outcome = (PRState.ABANDONED, f"error:{type(exc).__name__}",
+                   {"reason": f"watcher crashed: {exc}",
+                    "termination": "error", "dead_pid": pid})
+        reraise = exc
+    finally:
+        for s, h in prev_handlers.items():
+            with contextlib.suppress(OSError, ValueError):
+                signal.signal(s, h)
+
+    # Handlers restored — fold exactly once, immune to late signals.
+    next_state, cause, extra = outcome
+    if row_written:
+        if log_path:
+            extra.setdefault("log", log_path)
+        event = PRStateEvent(
+            ts=_utcnow(), pr=pr, repo=repo or "",
+            from_state=PRState.WATCHING.value, to_state=next_state.value,
+            watcher_id=watcher_id, attempt=0, session_id=sid, extra=extra,
+        )
+        # CAS (BRO-2374): if this watcher was superseded while its `gh` child
+        # was still running, the key now belongs to the replacement and this
+        # fold is stale. Dropping it is the point — applying it would bury a
+        # live watcher and hand its slot to a third.
+        if append_state_event(event, expect_owner=watcher_id):
+            # A slice expiry is a hand-back, not news: no phone buzz every
+            # nine minutes while CI runs.
+            emit_termination_report(
+                pr_termination_report(dataclasses.asdict(event), cause=cause),
+                do_notify=cause != "slice-expired")
+        else:
+            # The termination invariant (BRO-1701) says EVERY exit path emits
+            # a report. A dropped fold is still a termination — of *this*
+            # watcher — so it reports as one, with the supersession as its
+            # cause. Printing to stderr instead would leave consumers of
+            # termination reports with no completion for this watcher at all.
+            fold_rejected = True
+            report = pr_termination_report(
+                dataclasses.asdict(event), cause=f"superseded:{cause}")
+            report["state"] = "SUPERSEDED"
+            report["next_action"] = (
+                "none — a live watcher owns this PR; this fold was discarded")
+            emit_termination_report(report,
+                                    do_notify=cause != "slice-expired")
+    # `reraise` must survive the rejection branch: an early return here would
+    # swallow the very exception that terminated the watcher.
+    if reraise is not None:
+        raise reraise
+    if fold_rejected:
+        return EXIT_DEGRADED
+    if next_state is PRState.ABANDONED:
+        return EXIT_DEGRADED
+    if cause == "slice-expired":
+        if args.json:
+            print(json.dumps({"watcher_id": watcher_id, "result": "PENDING",
+                              "slice_seconds": slice_s}))
+        else:
+            again = f"p9 watch {pr}" + (f" --repo {repo}" if args.repo else "")
+            print(f"pending: CI on PR #{pr} still running after the "
+                  f"{slice_s:.0f}s slice — run `{again}` again "
+                  "(in the foreground)")
+        return EXIT_PENDING
+    rc = int(extra.get("gh_exit_code", 0))
+    if args.json:
+        print(json.dumps({"watcher_id": watcher_id, "result": next_state.value, "gh_exit_code": rc}))
+    else:
+        print(f"folded: {next_state.value} (gh exit {rc})")
+    return EXIT_OK
+
+
+def cmd_host(args: argparse.Namespace) -> int:
+    """Report the wait regime this host needs (BRO-2815)."""
+    prof = host_profile()
+    if args.json:
+        print(json.dumps(prof))
+        return EXIT_OK
+    if prof["background_wakes"]:
+        print(f"host={prof['host']}: a finished background task wakes this "
+              "session; `p9 watch <pr>` may run as a background task")
+    else:
+        print(f"host={prof['host']} (from {prof['source']}): a finished "
+              "background task does NOT wake an idle session. Run "
+              "`p9 watch <pr>` in the FOREGROUND; it returns every "
+              f"{prof['default_slice_seconds']}s with exit 8 while CI runs, "
+              "so run it again until it folds. Run reviewers as blocking "
+              "subagents, never in the background.")
+    return EXIT_OK
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    # Self-healing preflight: drain provably-dead watchers (liveness-only, no
+    # network) so a crashed session's row stops counting against the ceiling
+    # and stops showing as "in flight". --no-reap opts out.
+    if not getattr(args, "no_reap", False):
+        reap_stale_watchers(reconcile=False)
+    session_id = None
+    if getattr(args, "session", None):
+        session_id = current_session_id() if args.session == "current" else args.session
+    rows = open_prs(session_id=session_id)
+    if args.pr is not None:
+        rows = [r for r in rows if r["pr"] == int(args.pr)]
+    # Generic waits are not PR-scoped: a --pr filter must not leak them
+    # (CodeRabbit).
+    wrows = [] if args.pr is not None else open_waits(session_id=session_id)
+    if args.json:
+        # open_waits is additive (BRO-1701) — consumers keyed on open_prs
+        # keep working unchanged. Rows are printed exactly as recorded: p9
+        # neither adds read-path bookkeeping to a row nor invents a repo for
+        # one, so there is nothing to strip and nothing unlabelled to leak.
+        print(json.dumps({"open_prs": rows, "open_waits": wrows}, indent=2))
+    else:
+        if not rows and not wrows:
+            print("no PRs or waits in flight")
+            return EXIT_OK
+        for r in rows:
+            sess = r.get("session_id", "") or "-"
+            print(
+                f"#{r['pr']:<5} {r['to_state']:<18} "
+                f"{(r.get('repo') or '-'):<24} "
+                f"session={sess} watcher={r['watcher_id']} "
+                f"attempt={r.get('attempt', 0)}"
+            )
+        for w in wrows:
+            sess = w.get("session_id", "") or "-"
+            extra = w.get("extra") or {}
+            print(
+                f"wait  {w.get('name', '-'):<18} "
+                f"{w['to_state']:<18} "
+                f"session={sess} wait_id={w.get('wait_id', '')} "
+                f"pid={extra.get('pid', '-')}"
+            )
+    return EXIT_OK
+
+
+def cmd_wait_queue(args: argparse.Namespace) -> int:
+    all_sessions = bool(getattr(args, "all", False))
+    sub = args.action
+    if sub == "push":
+        item = queue_push(
+            args.item, args.source, pr=args.pr,
+            isolation_tier=args.tier or "none", repo=getattr(args, "repo", "") or "",
+        )
+        print(item.id)
+        return EXIT_OK
+    if sub == "pop":
+        head = queue_pop(all_sessions=all_sessions)
+        if not head:
+            print("(empty)")
+            return EXIT_OK
+        print(json.dumps(dataclasses.asdict(head)))
+        return EXIT_OK
+    if sub == "list":
+        items = queue_list(all_sessions=all_sessions)
+        if args.json:
+            print(json.dumps([dataclasses.asdict(it) for it in items], indent=2))
+        else:
+            for it in items:
+                print(f"[{it.source:<7}] {it.id}  {it.item}")
+        return EXIT_OK
+    if sub == "clear":
+        n = queue_clear(all_sessions=all_sessions)
+        print(f"cleared {n} item(s)")
+        return EXIT_OK
+    print(f"unknown wait-queue action: {sub}", file=sys.stderr)
+    return EXIT_USAGE
+
+
+def cmd_heal(args: argparse.Namespace) -> int:
+    apply = bool(getattr(args, "apply", False))
+    if not args.classify and not apply:
+        print("p9 heal requires --classify (read-only) or --apply (run heal)",
+              file=sys.stderr)
+        return EXIT_USAGE
+    if args.log_file:
+        log = Path(args.log_file).read_text(encoding="utf-8")
+    elif not sys.stdin.isatty():
+        log = sys.stdin.read()
+    else:
+        # Live mode: pull from gh
+        log = _gh_log_failed(args.pr, args.repo)
+    result = classify(log)
+
+    if not apply:
+        print(json.dumps(dataclasses.asdict(result), indent=2))
+        return EXIT_OK
+
+    # --apply path. Only auto-classifiable failures with a heal_command run;
+    # everything else is an escalation (refuse, no action).
+    base = dataclasses.asdict(result)
+    if not result.classified or not result.heal_command:
+        print(json.dumps({**base, "applied": False,
+                          "reason": "not auto-classifiable — escalate"}, indent=2))
+        return EXIT_DEGRADED
+    if args.dry_run:
+        print(json.dumps({**base, "applied": False, "dry_run": True,
+                          "would_run": result.heal_command}, indent=2))
+        return EXIT_OK
+
+    # Serialize heal execution workspace-wide (spec §5.7 / heal.lock). Heal
+    # commands touch shared tooling state — caches, generated files — that a
+    # heal in a *parallel session* could race against. One heal in flight at a
+    # time, machine-wide. This is the gap that left heal.lock defined-but-unused.
+    timeout = float(getattr(args, "lock_timeout", 30.0) or 30.0)
+    try:
+        with file_lock(heal_lock_path(), timeout_s=timeout):
+            rc = subprocess.run(result.heal_command, shell=True, check=False).returncode
+    except P9Error as e:
+        print(f"heal lock contention: {e}", file=sys.stderr)
+        return EXIT_HEAL_LOCK_TIMEOUT
+    print(json.dumps({**base, "applied": True, "heal_exit_code": rc}, indent=2))
+    return EXIT_OK if rc == 0 else EXIT_DEGRADED
+
+
+def cmd_reap(args: argparse.Namespace) -> int:
+    """Reconcile dead-watcher rows so crashed/closed sessions stop holding
+    concurrency slots. Liveness-based; enriches reasons via GitHub unless
+    --no-reconcile."""
+    reaped = reap_stale_watchers(
+        reconcile=not getattr(args, "no_reconcile", False),
+        grace_seconds=0.0 if getattr(args, "now", False) else None,
+    )
+    if getattr(args, "json", False):
+        print(json.dumps({"reaped": reaped}, indent=2))
+        return EXIT_OK
+    if not reaped:
+        print("p9 reap: nothing stale")
+        return EXIT_OK
+    for r in reaped:
+        print(f"  #{r['pr']} ({r.get('repo') or '-'}): "
+              f"{r['to_state']} ({r.get('reason', '')})")
+    print(f"p9 reap: reaped {len(reaped)}")
+    return EXIT_OK
+
+
+def cmd_events_tail(args: argparse.Namespace) -> int:
+    rows, _ = jsonl_read_all(state_jsonl())
+    if args.since:
+        cutoff = _parse_duration_ago(args.since)
+        rows = [r for r in rows if r["ts"] >= cutoff]
+    for r in rows:
+        print(json.dumps(r))
+    return EXIT_OK
+
+
+def merge_ready_verdict(pr: int, repo: str | None) -> dict:
+    """Query GitHub for the REAL merge predicate — not the `gh pr checks --watch`
+    exit code, which is necessary-not-sufficient (it returns 0 on a subset of
+    checks and before async bot reviews settle; observed three times on bstack
+    PR #78 — see BRO-1489).
+
+    Ready iff GitHub's server-computed ``mergeStateStatus`` says the required
+    gates are satisfied AND there are zero unresolved review threads:
+
+      - ``CLEAN``    → ready (everything green).
+      - ``UNSTABLE`` → ready ONLY when 0 unresolved review threads. UNSTABLE means
+                       mergeable with all *required* checks green but some
+                       *non-required* check pending/failing (e.g. a CodeRabbit
+                       soft-status that never resolves). GitHub computes
+                       required-vs-non-required server-side, so we trust
+                       mergeStateStatus instead of fragile isRequired parsing.
+      - ``BLOCKED`` / ``DIRTY`` / ``BEHIND`` / ``DRAFT`` / ``UNKNOWN`` → not ready.
+      - any unresolved review thread → not ready (stricter than branch protection;
+        bstack reflex: every bot/human thread closed before merge).
+      - any error querying gh → not ready (fail-safe; never merge blind).
+
+    Returns a dict: {ready, state, mergeable, review_decision, unresolved_threads, reason}.
+    ``unresolved_threads`` is -1 when it could not be determined (best-effort
+    graphql); an undeterminable count does NOT block (the GitHub-enforced gates
+    in mergeStateStatus already cover required conversation-resolution).
+    """
+    # mergeable / mergeStateStatus / reviewDecision are the valid `gh pr view
+    # --json` fields. (reviewThreads is NOT a pr-view field — it needs graphql;
+    # see _unresolved_review_threads below. This was caught by dogfooding.)
+    cmd = ["gh", "pr", "view", str(pr), "--json",
+           "mergeable,mergeStateStatus,reviewDecision,headRefOid"]
+    if repo:
+        cmd += ["--repo", repo]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        return {"ready": False, "state": "QUERY_FAILED", "mergeable": "UNKNOWN",
+                "review_decision": "", "unresolved_threads": -1,
+                "reason": f"gh unavailable: {e}"}
+    if out.returncode != 0:
+        return {"ready": False, "state": "QUERY_FAILED", "mergeable": "UNKNOWN",
+                "review_decision": "", "unresolved_threads": -1,
+                "reason": (out.stderr.strip()[:200] or "gh pr view failed")}
+    try:
+        data = json.loads(out.stdout)
+    except json.JSONDecodeError as e:
+        return {"ready": False, "state": "QUERY_FAILED", "mergeable": "UNKNOWN",
+                "review_decision": "", "unresolved_threads": -1,
+                "reason": f"non-JSON from gh: {e}"}
+
+    state = (data.get("mergeStateStatus") or "UNKNOWN").upper()
+    mergeable = (data.get("mergeable") or "UNKNOWN").upper()
+    decision = (data.get("reviewDecision") or "").upper()
+    unresolved = _unresolved_review_threads(pr, repo)  # int, or -1 if undeterminable
+
+    if mergeable == "CONFLICTING" or state in {"DIRTY", "BEHIND", "DRAFT", "BLOCKED", "UNKNOWN"}:
+        ready, reason = False, f"mergeStateStatus={state} mergeable={mergeable}"
+    elif decision == "CHANGES_REQUESTED":
+        ready, reason = False, "reviewDecision=CHANGES_REQUESTED"
+    elif unresolved > 0:
+        ready, reason = False, f"{unresolved} unresolved review thread(s)"
+    elif state == "CLEAN":
+        ready, reason = True, "CLEAN"
+    elif state == "UNSTABLE":
+        ready, reason = True, ("UNSTABLE but required checks green + no blocking review "
+                               "(only non-required checks un-green)")
+    else:
+        ready, reason = False, f"unrecognized mergeStateStatus={state}"
+
+    return {"ready": ready, "state": state, "mergeable": mergeable,
+            "review_decision": decision, "unresolved_threads": unresolved,
+            "reason": reason, "head_sha": data.get("headRefOid") or ""}
+
+
+def _unresolved_review_threads(pr: int, repo: str | None) -> int:
+    """Count unresolved review threads via `gh api graphql` (best-effort).
+
+    Returns the count, or -1 if it cannot be determined (no repo, gh/graphql
+    error, or more than 100 threads). The gated merge path treats -1 as a FAIL;
+    the legacy merge-ready verdict does not block on it, because
+    mergeStateStatus already reflects GitHub-enforced conversation resolution.
+    """
+    if not repo or "/" not in repo:
+        return -1
+    owner, name = repo.split("/", 1)
+    q = ("query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n)"
+         "{pullRequest(number:$p){reviewThreads(first:100){totalCount nodes{isResolved}}}}}")
+    cmd = ["gh", "api", "graphql", "-f", f"query={q}",
+           "-F", f"o={owner}", "-F", f"n={name}", "-F", f"p={pr}"]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+        if out.returncode != 0:
+            return -1
+        threads = (json.loads(out.stdout)["data"]["repository"]["pullRequest"]
+                   ["reviewThreads"])
+        nodes = threads["nodes"]
+        seen = sum(1 for t in nodes if not t.get("isResolved", False))
+        if threads["totalCount"] > len(nodes) and seen == 0:
+            # >100 threads and none open on the first page: the rest are
+            # unknown (-1). Open ones on the first page are still counted, so
+            # the legacy merge-ready verdict blocks on them as it always did.
+            return -1
+        return seen
+    except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError, KeyError, TypeError):
+        return -1
+
+
+def cmd_merge_status(args: argparse.Namespace) -> int:
+    """Query + print the real merge predicate for a PR. The agent calls this
+    instead of trusting the watcher exit code. Exit 0 iff merge-ready."""
+    pr = int(args.pr)
+    repo = resolve_repo(args.repo)
+    v = merge_ready_verdict(pr, repo)
+    if args.json:
+        print(json.dumps(v))
+    else:
+        verdict = "READY" if v["ready"] else "NOT-READY"
+        print(f"PR #{pr}: {verdict} — {v['reason']} "
+              f"(mergeStateStatus={v['state']}, unresolved_threads={v['unresolved_threads']})")
+    return EXIT_OK if v["ready"] else EXIT_DEGRADED
+
+
+def cmd_merge_ready(args: argparse.Namespace) -> int:
+    pr = int(args.pr)
+    # BRO-1988: resolve the repo FIRST and qualify the state read with it.
+    # Reading bare-number here is the reproduced defect — `p9 merge-ready 256`
+    # answered "not GREEN (current=ABANDONED)" for a freshly-green
+    # broomva/workspace#256 because Acme/Repo#256 owned that key.
+    repo = resolve_repo(args.repo)
+    # Read the owner alongside the state: the merge-ready decision straddles a
+    # network call, which is the widest read-then-append window in this file.
+    green_row = latest_row(pr, repo)
+    green_owner = _owner_of(green_row or {})
+    state = PRState(green_row["to_state"]) if green_row else None
+    if state != PRState.GREEN:
+        print(
+            f"PR #{pr} ({repo or 'repo-unknown'}) not GREEN "
+            f"(current={state.value if state else 'UNKNOWN'})",
+            file=sys.stderr,
+        )
+        return EXIT_DEGRADED
+
+    # Verify the REAL merge predicate before authorizing MERGE_READY. The GREEN
+    # state only means `gh pr checks --watch` exited 0 — necessary, not
+    # sufficient. Refuse if the PR is not actually mergeable (BRO-1489).
+    verdict = None
+    if not getattr(args, "no_verify", False):
+        verdict = merge_ready_verdict(pr, repo)
+        if not verdict["ready"]:
+            print(
+                f"PR #{pr} NOT merge-ready: {verdict['reason']} "
+                f"(mergeStateStatus={verdict['state']}, "
+                f"unresolved_threads={verdict['unresolved_threads']}).",
+                file=sys.stderr,
+            )
+            print(
+                "  The watcher exit code is necessary-not-sufficient; refusing to "
+                "mark MERGE_READY. Re-run once checks settle, or --no-verify to override.",
+                file=sys.stderr,
+            )
+            return EXIT_DEGRADED
+
+    event = PRStateEvent(
+        ts=_utcnow(),
+        pr=pr,
+        repo=repo or "",
+        from_state=PRState.GREEN.value,
+        to_state=PRState.MERGE_READY.value,
+        watcher_id="merge-ready",
+        attempt=0,
+        extra={"merge_verdict": verdict} if verdict else {"merge_verdict": "skipped (--no-verify)"},
+    )
+    # CAS (BRO-2374): the verdict above is a network round-trip. A re-arm that
+    # landed during it owns the key now, and writing MERGE_READY over its
+    # WATCHING row would authorize a merge against state nobody is watching.
+    if not append_state_event(event, expect_owner=green_owner):
+        print(f"PR #{pr} ({repo or 'repo-unknown'}) changed hands while the "
+              f"merge verdict was being fetched (was watcher {green_owner!r}); "
+              f"not marking MERGE_READY. Re-run once it settles.",
+              file=sys.stderr)
+        return EXIT_DEGRADED
+    print(f"PR #{pr} marked MERGE_READY (control metalayer authorizes merge)")
+    return EXIT_OK
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers (gh integration, cwd repo detection, time parsing)
+# ─────────────────────────────────────────────────────────────────────────────
+def _iso_to_epoch(ts: str) -> float:
+    try:
+        return _dt.datetime.fromisoformat(ts).timestamp()
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def cmd_wait_for(args: argparse.Namespace) -> int:
+    """Generic non-PR wait (BRO-1701): poll a command until it exits 0.
+
+    Same lifecycle discipline as a PR watch — a waits.jsonl row, a heartbeat
+    touched on every poll (the stuck-scan progress signal), and the
+    termination invariant on every exit path (success, failure, timeout,
+    OR kill): fold + report + notify.
+    """
+    sid = current_session_id()
+    name = args.name
+    # --cmd overrides --preset, as the help promises (P20 finding #6 /
+    # CodeRabbit): an explicit command is always the stronger signal.
+    if args.cmd and args.cmd.strip():
+        cmd = args.cmd
+    elif args.preset:
+        template = _WAIT_PRESETS.get(args.preset)
+        if template is None:
+            print(f"unknown preset {args.preset!r}; known: "
+                  f"{', '.join(sorted(_WAIT_PRESETS))}", file=sys.stderr)
+            return EXIT_USAGE
+        if "{target}" in template and not args.target:
+            print(f"preset {args.preset!r} needs --target", file=sys.stderr)
+            return EXIT_USAGE
+        cmd = template.replace("{target}", args.target or "")
+    else:
+        cmd = ""
+    if not cmd.strip():
+        print("wait-for needs --cmd or --preset", file=sys.stderr)
+        return EXIT_USAGE
+
+    interval = max(0.1, float(args.interval))
+    timeout = max(interval, float(args.timeout))
+    wait_id = _safe_slug(args.wait_id) if args.wait_id else uuid.uuid4().hex[:12]
+    script = str(Path(__file__).resolve())
+    # Recorded with the RESOLVED command so `p9 rearm` can re-exec without
+    # re-deriving preset/target. Built from controlled fields only.
+    # `--slice 0`: a re-armed or detached child blocks nobody's Bash call,
+    # so it must not inherit the host's foreground slice from the env.
+    rearm_argv = [sys.executable, script, "wait-for", name,
+                  "--cmd", cmd, "--interval", str(interval),
+                  "--timeout", str(timeout), "--slice", "0"]
+
+    if args.detach:
+        if not host_profile()["background_wakes"]:
+            print("p9: this host does not wake an idle session when a "
+                  f"background task ends; nothing will tell you {name!r} "
+                  "settled — run the wait in the foreground instead",
+                  file=sys.stderr)
+        logs_dir().mkdir(parents=True, exist_ok=True)
+        log_path = logs_dir() / f"wait-{_safe_slug(wait_id)}.log"
+        child_argv = rearm_argv + ["--wait-id", wait_id]
+        with open(log_path, "ab") as out:
+            child = subprocess.Popen(child_argv, stdout=out,
+                                     stderr=subprocess.STDOUT,
+                                     start_new_session=True)
+        info = {"wait_id": wait_id, "pid": child.pid, "name": name,
+                "log": str(log_path), "mode": "detach"}
+        print(json.dumps(info) if args.json else
+              f"wait_id={wait_id} pid={child.pid} name={name} log={log_path}")
+        return EXIT_OK
+
+    base_extra: dict[str, Any] = {
+        "cmd": cmd, "interval": interval, "timeout": timeout,
+        "pid": os.getpid(), "argv": rearm_argv,
+        **({"preset": args.preset} if args.preset else {}),
+        **({"rearmed_from": args.rearmed_from} if args.rearmed_from else {}),
+    }
+
+    polls = 0
+    last_exit: int | None = None
+    stderr_tail: list[str] = []
+    row_written = False
+    # (state, cause, reason, exit_code) — decided in the loop, folded ONCE
+    # after handlers are restored so a late signal cannot double-fold
+    # (P20 finding #3); handlers go up before the WAITING row is written so
+    # there is no registered-but-unguarded window (P20 finding #4).
+    outcome: tuple[WaitState, str, str | None, int] | None = None
+    reraise: BaseException | None = None
+
+    def _on_signal(signum: int, _frame: Any) -> None:
+        raise _WaitInterrupted(signum)
+
+    prev_handlers: dict[int, Any] = {}
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        with contextlib.suppress(OSError, ValueError):
+            prev_handlers[s] = signal.signal(s, _on_signal)
+
+    slice_s = resolve_slice(getattr(args, "slice", None))
+    # A slice only matters when it ends before the deadline. Both are fixed
+    # offsets from `started`, so compare them once, not against `remaining`
+    # (which shrinks below the slice mid-wait and would switch it off).
+    if slice_s is not None and slice_s >= timeout:
+        slice_s = None
+    horizon = timeout if slice_s is None else slice_s
+    started = time.monotonic()
+    try:
+        append_wait_event(WaitEvent(
+            ts=_utcnow(), wait_id=wait_id, name=name,
+            from_state="NEW", to_state=WaitState.WAITING.value,
+            session_id=sid, extra=dict(base_extra),
+        ))
+        row_written = True
+        touch_wait_heartbeat(wait_id)
+        if args.json:
+            print(json.dumps({"wait_id": wait_id, "pid": os.getpid(),
+                              "name": name, "mode": "foreground"}), flush=True)
+        else:
+            print(f"wait_id={wait_id} pid={os.getpid()} name={name} "
+                  f"interval={interval}s timeout={timeout}s", flush=True)
+
+        while outcome is None:
+            poll_budget = max(1.0, min(interval * 3.0 + 10.0,
+                                       horizon - (time.monotonic() - started)))
+            try:
+                res = subprocess.run(cmd, shell=True, capture_output=True,
+                                     text=True, timeout=poll_budget,
+                                     check=False)
+                last_exit = res.returncode
+                if res.stderr:
+                    stderr_tail = res.stderr.splitlines()[-5:]
+            except subprocess.TimeoutExpired:
+                last_exit = None
+                stderr_tail = [f"poll exceeded {poll_budget:.0f}s budget"]
+            polls += 1
+            touch_wait_heartbeat(wait_id)
+            if last_exit == 0:
+                outcome = (WaitState.SUCCEEDED, "predicate-true", None,
+                           EXIT_OK)
+                break
+            if polls == 1 and last_exit in (126, 127):
+                outcome = (WaitState.FAILED, "command-not-runnable",
+                           f"command exited {last_exit} on first poll "
+                           f"(not found / not executable)",
+                           EXIT_EXTERNAL_ERROR)
+                break
+            remaining = timeout - (time.monotonic() - started)
+            if remaining <= 0:
+                outcome = (WaitState.TIMED_OUT, "deadline",
+                           f"predicate still false after {timeout:.0f}s "
+                           f"({polls} polls)", EXIT_DEGRADED)
+                break
+            if slice_s is not None:
+                slice_left = slice_s - (time.monotonic() - started)
+                if slice_left <= 0:
+                    outcome = (WaitState.TIMED_OUT, "slice-expired",
+                               f"predicate still false after the "
+                               f"{slice_s:.0f}s foreground slice; run "
+                               f"p9 wait-for again with the --timeout left",
+                               EXIT_PENDING)
+                    break
+                remaining = min(remaining, slice_left)
+            time.sleep(min(interval, remaining))
+            # Deadline-first: never launch another poll past the deadline
+            # (CodeRabbit) — the sleep above may end exactly at it.
+            if time.monotonic() - started >= timeout:
+                outcome = (WaitState.TIMED_OUT, "deadline",
+                           f"predicate still false after {timeout:.0f}s "
+                           f"({polls} polls)", EXIT_DEGRADED)
+    except _WaitInterrupted as exc:
+        signame = signal.Signals(exc.signum).name
+        outcome = (WaitState.KILLED, f"killed:{signame}",
+                   f"wait killed by {signame}", EXIT_DEGRADED)
+    except BaseException as exc:  # unexpected — the invariant still holds
+        outcome = (WaitState.KILLED, f"error:{type(exc).__name__}",
+                   f"wait crashed: {exc}", EXIT_DEGRADED)
+        reraise = exc
+    finally:
+        for s, h in prev_handlers.items():
+            with contextlib.suppress(OSError, ValueError):
+                signal.signal(s, h)
+
+    # Handlers restored — fold exactly once, immune to late signals.
+    state, cause, reason, exit_code = outcome
+    if row_written:
+        extra = dict(base_extra)
+        extra.update(polls=polls, last_exit=last_exit)
+        if stderr_tail:
+            extra["stderr_tail"] = stderr_tail[-5:]
+        if reason:
+            extra["reason"] = reason
+        event = WaitEvent(
+            ts=_utcnow(), wait_id=wait_id, name=name,
+            from_state=WaitState.WAITING.value, to_state=state.value,
+            session_id=sid, extra=extra,
+        )
+        append_wait_event(event)
+        with contextlib.suppress(OSError):
+            wait_heartbeat_path(wait_id).unlink(missing_ok=True)
+        report = wait_termination_report(dataclasses.asdict(event),
+                                         cause=cause)
+        if cause == "slice-expired":
+            left = max(1, int(timeout - (time.monotonic() - started)))
+            report["next_action"] = (
+                f"run p9 wait-for again in the foreground with --timeout "
+                f"{left} (the time left to the original deadline)")
+        emit_termination_report(report, do_notify=cause != "slice-expired")
+    if reraise is not None:
+        raise reraise
+    return exit_code
+
+
+def _sane_rearm_argv(argv: Any) -> bool:
+    """Recorded by p9 itself from controlled fields, but validate the exact
+    re-exec shape anyway — the state dir is plain JSONL on disk and this
+    list reaches Popen (P20 finding / CodeRabbit): [python, .../p9.py,
+    "wait-for", <name>, ...flags]."""
+    return (isinstance(argv, list) and len(argv) >= 4
+            and all(isinstance(a, str) for a in argv)
+            and Path(argv[1]).name == "p9.py"
+            and argv[2] == "wait-for")
+
+
+def cmd_rearm(args: argparse.Namespace) -> int:
+    """Re-arm dead-but-unfinished watchers and waits (BRO-1701).
+
+    The complement of the termination invariant for untrappable deaths
+    (SIGKILL, machine reboot): a dead PR watcher re-enters via
+    `p9 watch --adopt`; a dead generic wait is folded ABANDONED and
+    re-spawned from its recorded argv.
+    """
+    grace = 0.0 if args.now else _watcher_grace_seconds()
+    script = str(Path(__file__).resolve())
+    actions: list[dict[str, Any]] = []
+
+    # Per-row fault isolation (P20 finding #2): one un-rearmable row must
+    # never abort the scan or, worse, strand a row it already folded.
+    for row in open_prs():
+        state = PRState(row["to_state"])
+        if state not in (PRState.WATCHING, PRState.HEALING):
+            continue
+        pid = _row_pid(row)
+        if pid > 0 and is_watcher_alive(pid):
+            continue
+        if _iso_age_seconds(row.get("ts", "")) < grace:
+            continue
+        pr = row["pr"]
+        repo = _row_repo(row)
+        action = {"kind": "pr-watch", "pr": pr, "repo": repo,
+                  "dead_pid": pid}
+        try:
+            if args.dry_run:
+                action["would"] = ("fold ABANDONED (no repo recorded)"
+                                   if not repo else
+                                   "re-watch via p9 watch --adopt")
+            elif not repo:
+                # A row that recorded no repo is FOLDED AND NOT RE-ARMED.
+                #
+                # Omitting `--repo` from the child argv is NOT sufficient and
+                # was the round-2 mistake: the child runs `resolve_repo(None)`
+                # itself, and since parent and child share cwd and env it
+                # resolves the *same* ambient repo. The observed chain was
+                # `gh pr checks <pr> --watch --repo <ambient>` -> GREEN ->
+                # merge-ready -> `gh pr merge` on a PR nobody targeted.
+                #
+                # There is no correct repo to re-arm against — that is the
+                # whole content of "no repo recorded" — so the only safe act
+                # is none. The fold frees the slot (P20 finding #8); recovery
+                # is an explicit `p9 watch <pr> --repo <owner/name> --adopt`,
+                # which is a human naming the repo p9 could not.
+                stale = PRStateEvent(
+                    ts=_utcnow(), pr=pr, repo="",
+                    from_state=state.value,
+                    to_state=PRState.ABANDONED.value,
+                    watcher_id="rearm",
+                    session_id=row.get("session_id", ""),
+                    extra={"reason": "repo-less row superseded by rearm",
+                           "dead_pid": pid},
+                )
+                # CAS (BRO-2374): this writes watcher_id="rearm" while
+                # needing to prove it owned the row it read — the case an
+                # implicit event.watcher_id check cannot express, and why
+                # expect_owner is an explicit argument.
+                if not append_state_event(
+                        stale, expect_owner=_owner_of(row)):
+                    action["skipped"] = (
+                        "row changed hands before the fold landed; left to "
+                        "its new owner")
+                    actions.append(action)
+                    continue
+                emit_termination_report(pr_termination_report(
+                    dataclasses.asdict(stale), cause="reaped:dead-watcher"))
+                action["skipped"] = (
+                    "no repo recorded; folded ABANDONED without re-arming — "
+                    "re-watch explicitly with `p9 watch "
+                    f"{pr} --repo <owner/name> --adopt`")
+                actions.append(action)
+                continue
+            else:
+                # `--slice 0` (BRO-2815): a detached child blocks nobody's
+                # Bash call; sliced, it would fold PUSHED unseen and stop.
+                argv = [sys.executable, script, "watch", str(pr),
+                        "--repo", repo, "--slice", "0"]
+                argv.append("--force" if args.now else "--adopt")
+                logs_dir().mkdir(parents=True, exist_ok=True)
+                log_path = logs_dir() / f"rearm-watch-{_safe_slug(str(pr))}.log"
+                with open(log_path, "ab") as out:
+                    child = subprocess.Popen(argv, stdout=out,
+                                             stderr=subprocess.STDOUT,
+                                             start_new_session=True)
+                action.update(rearmed_pid=child.pid, log=str(log_path))
+        except Exception as e:  # noqa: BLE001 — isolate per row
+            action["error"] = f"{type(e).__name__}: {e}"
+        actions.append(action)
+
+    for row in open_waits():
+        extra = row.get("extra") or {}
+        pid = int(extra.get("pid", 0) or 0)
+        if pid > 0 and is_watcher_alive(pid):
+            continue
+        if _iso_age_seconds(row.get("ts", "")) < grace:
+            continue
+        wid, name = row.get("wait_id", ""), row.get("name", "")
+        argv = extra.get("argv")
+        action = {"kind": "wait", "wait_id": wid, "name": name,
+                  "dead_pid": pid}
+        if not _sane_rearm_argv(argv):
+            action["skipped"] = "no runnable argv recorded"
+            actions.append(action)
+            continue
+        if args.dry_run:
+            action["would"] = "fold ABANDONED + re-spawn recorded argv"
+            actions.append(action)
+            continue
+        try:
+            # Spawn FIRST, fold after (P20 finding #2): if the spawn fails,
+            # the row stays WAITING and the next rearm retries it — a lost
+            # wait is worse than a rare duplicate from a fold that fails
+            # after a successful spawn.
+            logs_dir().mkdir(parents=True, exist_ok=True)
+            log_path = logs_dir() / f"rearm-wait-{_safe_slug(name or wid)}.log"
+            with open(log_path, "ab") as out:
+                child = subprocess.Popen(
+                    list(argv) + ["--rearmed-from", wid], stdout=out,
+                    stderr=subprocess.STDOUT, start_new_session=True)
+            event = WaitEvent(
+                ts=_utcnow(), wait_id=wid, name=name,
+                from_state=WaitState.WAITING.value,
+                to_state=WaitState.ABANDONED.value,
+                session_id=row.get("session_id", ""),
+                extra={**extra, "reason": "dead wait superseded by rearm",
+                       "superseded_by_pid": child.pid},
+            )
+            append_wait_event(event)
+            with contextlib.suppress(OSError):
+                wait_heartbeat_path(wid).unlink(missing_ok=True)
+            emit_termination_report(
+                wait_termination_report(dataclasses.asdict(event),
+                                        cause="reaped:dead-wait"))
+            action.update(rearmed_pid=child.pid, log=str(log_path))
+        except Exception as e:  # noqa: BLE001 — isolate per row
+            action["error"] = f"{type(e).__name__}: {e}"
+        actions.append(action)
+
+    if args.json:
+        print(json.dumps({"rearmed": actions}, indent=2))
+    elif not actions:
+        print("nothing to re-arm")
+    else:
+        for a in actions:
+            ident = a.get("pr") or a.get("name") or a.get("wait_id")
+            verb = a.get("would") or a.get("skipped") or \
+                f"re-armed pid={a.get('rearmed_pid')}"
+            print(f"{a['kind']} {ident}: {verb}")
+    return EXIT_OK
+
+
+def _stuck_threshold_seconds(args: argparse.Namespace) -> float:
+    if getattr(args, "threshold_min", None) is not None:
+        return max(60.0, float(args.threshold_min) * 60.0)
+    raw = os.environ.get("BROOMVA_P9_STUCK_MIN", "45")
+    try:
+        return max(60.0, float(raw) * 60.0)
+    except ValueError:
+        return 45 * 60.0
+
+
+def _stuck_marker_path(kind: str, ident: str) -> Path:
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", f"{kind}-{ident}")
+    return stuck_markers_dir() / f"{safe}.json"
+
+
+def _already_notified(marker: Path, progress_epoch: float) -> bool:
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+        return float(data.get("progress_epoch", -1.0)) >= progress_epoch
+    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        return False
+
+
+def _write_stuck_marker(marker: Path, progress_epoch: float) -> None:
+    with contextlib.suppress(OSError):
+        stuck_markers_dir().mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            json.dumps({"progress_epoch": progress_epoch,
+                        "notified_at": _utcnow()}),
+            encoding="utf-8")
+
+
+def cmd_stuck_scan(args: argparse.Namespace) -> int:
+    """Stuck-detector (BRO-1701): live watchers/waits with no progress
+    inside the threshold produce a structured failure dump + notification.
+
+    Progress signal = newest of (last state event, watch-log mtime,
+    heartbeat mtime). Dead pids are reap/rearm territory, not stuck.
+    One notification per stall episode: a marker keyed on the progress
+    timestamp dedups until progress moves again (--renotify overrides).
+    """
+    threshold = _stuck_threshold_seconds(args)
+    now = time.time()
+    findings: list[dict[str, Any]] = []
+
+    def _consider(kind: str, ident: str, row: dict[str, Any],
+                  progress_epoch: float, pid: int,
+                  log_path: str | None, next_action: str) -> None:
+        age = now - progress_epoch
+        if age < threshold:
+            return
+        marker = _stuck_marker_path(kind, ident)
+        deduped = _already_notified(marker, progress_epoch) and not args.renotify
+        finding: dict[str, Any] = {
+            "report": "p9-stuck", "kind": kind, "state": row.get("to_state"),
+            "pid": pid, "progress_age_s": round(age),
+            "threshold_s": round(threshold),
+            "last_event_ts": row.get("ts", ""),
+            "session_id": row.get("session_id", ""),
+            "next_action": next_action, "notified": not deduped,
+        }
+        if kind == "pr-watch":
+            finding.update(pr=row.get("pr"), repo=_row_repo(row))
+        else:
+            finding.update(wait_id=row.get("wait_id"), name=row.get("name"))
+        if log_path:
+            finding["log"] = log_path
+            tail = _log_tail(log_path)
+            if tail:
+                finding["log_tail"] = tail
+        findings.append(finding)
+        if deduped:
+            return
+        ident_h = (f"PR #{row.get('pr')} {_row_repo(row) or 'repo-unknown'}"
+                   if kind == "pr-watch" else f"wait '{row.get('name')}'")
+        notify("stuck",
+               f"p9 STUCK: {ident_h} — no progress in "
+               f"{round(age / 60)} min",
+               f"pid={pid} state={row.get('to_state')}; next: {next_action}",
+               finding)
+        _write_stuck_marker(marker, progress_epoch)
+
+    for row in open_prs():
+        if PRState(row["to_state"]) not in (PRState.WATCHING, PRState.HEALING):
+            continue
+        pid = _row_pid(row)
+        if not (pid > 0 and is_watcher_alive(pid)):
+            continue  # dead → reap/rearm, not stuck
+        progress = _iso_to_epoch(row.get("ts", ""))
+        log_path = (row.get("extra") or {}).get("log")
+        if log_path:
+            with contextlib.suppress(OSError):
+                progress = max(progress, Path(log_path).stat().st_mtime)
+        # repo_key so one logical repo can't produce two stall-dedup markers
+        # (NIT-9); _row_repo so a repo-less row markers under its true key.
+        _consider(
+            "pr-watch", f"{repo_key(_row_repo(row))}-{row['pr']}", row, progress,
+            pid, log_path,
+            f"inspect the watch log, then kill {pid} and `p9 rearm` "
+            f"(raise --threshold-min if this CI legitimately runs long)")
+
+    for row in open_waits():
+        extra = row.get("extra") or {}
+        pid = int(extra.get("pid", 0) or 0)
+        if not (pid > 0 and is_watcher_alive(pid)):
+            continue
+        progress = _iso_to_epoch(row.get("ts", ""))
+        hb = wait_heartbeat_path(row.get("wait_id", ""))
+        with contextlib.suppress(OSError):
+            progress = max(progress, hb.stat().st_mtime)
+        _consider(
+            "wait", row.get("wait_id", ""), row, progress, pid, None,
+            f"inspect the waited-on target, then kill {pid} and `p9 rearm`")
+
+    if args.json:
+        print(json.dumps({"stuck": findings}, indent=2))
+    elif not findings:
+        print("nothing stuck")
+    else:
+        for f in findings:
+            ident = f.get("pr") or f.get("name") or f.get("wait_id")
+            print(f"STUCK {f['kind']} {ident}: no progress in "
+                  f"{f['progress_age_s']}s (pid={f['pid']}) — "
+                  f"{f['next_action']}")
+    return EXIT_DEGRADED if findings else EXIT_OK
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    """Render termination reports (state + next action) on demand.
+
+    The read-side of the termination invariant: `p9 report` is what a
+    fresh session (or the Tier-1 #1 post-notification reconcile rule) runs
+    to learn what every tracked watcher/wait last did and what to do next.
+    """
+    reports: list[dict[str, Any]] = []
+    rows = _read_state_rows()
+    latest: dict[tuple[str, int], dict[str, Any]] = {}
+    for r in rows:
+        latest[(repo_key(r.get("repo", "")), r["pr"])] = r
+    pr_rows = list(latest.values())
+    if args.pr is not None:
+        pr_rows = [r for r in pr_rows if r["pr"] == int(args.pr)]
+    if args.repo:
+        want = repo_key(args.repo)
+        pr_rows = [r for r in pr_rows if repo_key(r.get("repo", "")) == want]
+    with_tail = args.pr is not None
+    for r in pr_rows:
+        reports.append(pr_termination_report(r, cause="report",
+                                             with_log_tail=with_tail))
+    if args.pr is None and not args.repo:
+        # Waits are neither PR- nor repo-scoped; either filter excludes them.
+        for r in all_wait_rows().values():
+            reports.append(wait_termination_report(r, cause="report"))
+    reports.sort(key=lambda r: r.get("last_event_ts", ""), reverse=True)
+    limit = max(1, int(args.limit))
+    reports = reports[:limit] if args.pr is None else reports
+    if args.json:
+        print(json.dumps({"reports": reports}, indent=2))
+    elif not reports:
+        print("no tracked watchers or waits")
+    else:
+        for rep in reports:
+            ident = (f"PR #{rep.get('pr')} {rep.get('repo', '')}"
+                     if rep["kind"] == "pr-watch"
+                     else f"wait '{rep.get('name')}'")
+            print(f"{ident}: {rep['state']} — next: {rep['next_action']}")
+    return EXIT_OK
+
+
+def cmd_notify(args: argparse.Namespace) -> int:
+    """Manual/agent-driven push through the configured channels — also the
+    channel smoke test (`p9 notify "test" --body "hello"`)."""
+    row = notify(args.kind, args.title, args.body or "", {"manual": True})
+    failed = [d for d in row["deliveries"] if not d.get("ok")]
+    if args.json:
+        print(json.dumps(row, indent=2))
+    else:
+        n_ok = len(row["deliveries"]) - len(failed)
+        print(f"notify: {n_ok}/{len(row['deliveries'])} channels delivered "
+              f"(audit row appended to {notify_jsonl()})")
+        for d in failed:
+            print(f"  - {d['channel']}: {d.get('error')}", file=sys.stderr)
+    return EXIT_DEGRADED if failed else EXIT_OK
+
+
+def _detect_repo() -> str | None:
+    """Back-compat alias for the detection half of :func:`resolve_repo`."""
+    return resolve_repo() or None
+
+
+def _gh_log_failed(pr: int, repo: str | None) -> str:
+    cmd = ["gh", "run", "view", "--log-failed"]
+    if repo:
+        cmd += ["--repo", repo]
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
+    return out.stdout or out.stderr or ""
+
+
+_DURATION_RE = re.compile(r"^(\d+)([smhd])$")
+
+
+def _parse_duration_ago(spec: str) -> str:
+    m = _DURATION_RE.match(spec)
+    if not m:
+        return spec  # treat as ISO timestamp passthrough
+    n, unit = int(m.group(1)), m.group(2)
+    secs = n * {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+    return (
+        _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(seconds=secs)
+    ).isoformat(timespec="seconds")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLI dispatch
+# ─────────────────────────────────────────────────────────────────────────────
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="p9",
+        description=(
+            "Broomva CI watcher + productive-wait primitive. "
+            "See docs/superpowers/specs/2026-05-04-p9-ci-watcher-design.md"
+        ),
+    )
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    pw = sub.add_parser("watch", help="Watch CI on a PR (foreground; folds result into state)")
+    pw.add_argument("pr", help="PR number")
+    pw.add_argument("--repo", help="OWNER/REPO (auto-detected if omitted)")
+    pw.add_argument("--dry-run", action="store_true",
+                    help="Do not actually spawn `gh pr checks --watch` (test mode)")
+    pw.add_argument("--detach", action="store_true",
+                    help="Fire-and-forget: spawn the watcher but do not block "
+                         "or fold its exit into a state event. The caller is "
+                         "responsible for finalizing state. Default is "
+                         "foreground (block + fold).")
+    # `--background` and `--block` are aliases for the default foreground
+    # behavior. They exist so historic AGENTS.md guidance using
+    # `p9 watch <pr> --background` keeps working without surprise errors.
+    pw.add_argument("--background", action="store_true",
+                    help="Alias for default foreground behavior (kept for "
+                         "backwards compatibility with reflexive-rule guidance)")
+    pw.add_argument("--block", action="store_true",
+                    help="Alias for default foreground behavior")
+    pw.add_argument("--slice", type=float, default=None,
+                    help="Return after this many seconds if CI is still "
+                         "running (exit 8; run watch again). Defaults to 540 "
+                         "on hosts where background completions do not wake "
+                         "the session (`p9 host`); 0 disables")
+    pw.add_argument("--adopt", action="store_true",
+                    help="Re-watch a PR whose prior watcher pid is gone, "
+                         "superseding the stale row immediately (orphan recovery "
+                         "after a crashed/closed session).")
+    pw.add_argument("--force", action="store_true",
+                    help="Supersede an existing watcher for this PR even if it "
+                         "appears live (overrides the double-watch guard).")
+    pw.add_argument("--json", action="store_true")
+    pw.set_defaults(func=cmd_watch)
+
+    ph = sub.add_parser("host", help="Does a finished background task wake "
+                        "this session? (decides foreground vs background waits)")
+    ph.add_argument("--json", action="store_true")
+    ph.set_defaults(func=cmd_host)
+
+    ps = sub.add_parser("status", help="Show in-flight PRs")
+    ps.add_argument("--pr", help="filter by PR number")
+    ps.add_argument("--session", default=None,
+                    help="Filter to a session id ('current' = the active session)")
+    ps.add_argument("--no-reap", action="store_true",
+                    help="Skip the self-healing dead-watcher preflight")
+    ps.add_argument("--json", action="store_true")
+    ps.set_defaults(func=cmd_status)
+
+    pq = sub.add_parser("wait-queue", help="Manage the productive-wait queue")
+    pq.add_argument("action", choices=["push", "pop", "list", "clear"])
+    pq.add_argument("--source", default="session",
+                    choices=list(_QUEUE_PRIORITY))
+    pq.add_argument("--item", default="", help="(push only) free-text item")
+    pq.add_argument("--pr", type=int, default=None,
+                    help="(push only) tag for this PR")
+    pq.add_argument("--repo", default=None,
+                    help="(push only) originating OWNER/REPO (for terminal-PR pruning)")
+    pq.add_argument("--tier", default=None,
+                    help="(push only) isolation tier")
+    pq.add_argument("--all", action="store_true",
+                    help="(pop/list/clear) act across ALL sessions, not just "
+                         "the current one (default is current-session scope)")
+    pq.add_argument("--json", action="store_true")
+    pq.set_defaults(func=cmd_wait_queue)
+
+    ph = sub.add_parser("heal", help="Classify (read-only) or apply a CI heal")
+    ph.add_argument("pr", help="PR number")
+    ph.add_argument("--repo", default=None)
+    ph.add_argument("--classify", action="store_true",
+                    help="Pure classifier read-out (no heal action)")
+    ph.add_argument("--apply", action="store_true",
+                    help="Run the classified heal_command under heal.lock "
+                         "(serialized workspace-wide; auto-classifiable failures only)")
+    ph.add_argument("--dry-run", action="store_true",
+                    help="With --apply: print the heal command instead of running it")
+    ph.add_argument("--lock-timeout", type=float, default=30.0,
+                    help="Seconds to wait for heal.lock before giving up (default 30)")
+    ph.add_argument("--log-file", default=None,
+                    help="Read failure log from file instead of `gh run view`")
+    ph.set_defaults(func=cmd_heal)
+
+    prp = sub.add_parser("reap",
+                         help="Reconcile dead-watcher rows (frees concurrency slots)")
+    prp.add_argument("--no-reconcile", action="store_true",
+                     help="Liveness only; do not query GitHub to enrich reasons")
+    prp.add_argument("--now", action="store_true",
+                     help="Ignore the grace window — reap dead watchers immediately")
+    prp.add_argument("--json", action="store_true")
+    prp.set_defaults(func=cmd_reap)
+
+    pe = sub.add_parser("events", help="Stream P9 events")
+    pe_sub = pe.add_subparsers(dest="events_cmd", required=True)
+    pet = pe_sub.add_parser("tail")
+    pet.add_argument("--since", default=None,
+                     help="Filter events newer than DURATION (e.g. 6h, 30m)")
+    pet.set_defaults(func=cmd_events_tail)
+
+    pm = sub.add_parser("merge-ready", help="Mark PR as ready for metalayer-authorized merge")
+    pm.add_argument("pr")
+    pm.add_argument("--repo", default=None)
+    pm.add_argument("--no-verify", action="store_true",
+                    help="Skip the live mergeStateStatus check (test/offline only; "
+                         "by default merge-ready verifies the real merge predicate)")
+    pm.set_defaults(func=cmd_merge_ready)
+
+    pms = sub.add_parser("merge-status",
+                         help="Query the REAL merge predicate (mergeStateStatus + "
+                              "unresolved review threads) — not the watcher exit code")
+    pms.add_argument("pr")
+    pms.add_argument("--repo", default=None)
+    pms.add_argument("--json", action="store_true", help="Emit the verdict as JSON")
+    pms.set_defaults(func=cmd_merge_status)
+
+    pab = sub.add_parser("abandon",
+                         help="Mark a PR as ABANDONED (frees concurrency slot)")
+    pab.add_argument("pr")
+    pab.add_argument("--repo", default=None)
+    pab.add_argument("--reason", default=None,
+                     help="Free-text reason recorded in extra.reason")
+    pab.set_defaults(func=cmd_abandon)
+
+    pcu = sub.add_parser("cleanup",
+                         help="Drain orphan WATCHING/HEALING rows by polling "
+                              "GitHub for each open PR's true state")
+    pcu.set_defaults(func=cmd_cleanup)
+
+    pa = sub.add_parser("auto-merge",
+                        help="Run policy-gated auto-merge on a MERGE_READY PR")
+    pa.add_argument("pr")
+    pa.add_argument("--repo", default=None)
+    pa.add_argument("--dry-run", action="store_true",
+                    help="Print the planned merge instead of executing it")
+    pa.set_defaults(func=cmd_auto_merge)
+
+    pgc = sub.add_parser("gate-check",
+                         help="Read-only: judge a PR against the governing "
+                              "policy's merge gates (exit 0 iff it would decide auto now)")
+    pgc.add_argument("pr")
+    pgc.add_argument("--repo", default=None)
+    pgc.add_argument("--json", action="store_true")
+    pgc.set_defaults(func=cmd_gate_check)
+
+    ppr = sub.add_parser("p20-record",
+                         help="Record a P20 verdict on a PR as the marker the "
+                              "merge gate reads, pinned to the reviewed commit")
+    ppr.add_argument("pr")
+    ppr.add_argument("--repo", default=None)
+    ppr.add_argument("--verdict", default="PASS", choices=["PASS", "FAIL", "STOP"])
+    ppr.add_argument("--score", type=int, required=True)
+    ppr.add_argument("--strata", required=True, help="Comma list from A,B,C")
+    ppr.add_argument("--sha", required=True,
+                     help="The full commit SHA the reviewers read (not the current head)")
+    ppr.add_argument("--note", default=None, help="Free text appended below the marker")
+    ppr.add_argument("--dry-run", action="store_true")
+    ppr.set_defaults(func=cmd_p20_record)
+
+    pwf = sub.add_parser(
+        "wait-for",
+        help="Generic non-PR wait: poll a command until it exits 0 "
+             "(deploy readiness, long extractions) with the full "
+             "termination invariant (report + notify on every exit)")
+    pwf.add_argument("name", help="Human-readable wait name (e.g. railway-deploy)")
+    pwf.add_argument("--cmd", default=None,
+                     help="Shell command polled until exit 0 (the predicate)")
+    pwf.add_argument("--preset", default=None,
+                     help=f"Command template: {', '.join(sorted(_WAIT_PRESETS))} "
+                          "(verify against your CLI version; --cmd overrides)")
+    pwf.add_argument("--target", default=None,
+                     help="Substituted into the preset's {target} placeholder")
+    pwf.add_argument("--interval", type=float, default=30.0,
+                     help="Seconds between polls (default 30)")
+    pwf.add_argument("--timeout", type=float, default=3600.0,
+                     help="Give up (TIMED_OUT) after this many seconds "
+                          "(default 3600)")
+    pwf.add_argument("--detach", action="store_true",
+                     help="Spawn the wait detached; output lands in "
+                          "logs/wait-<id>.log")
+    pwf.add_argument("--slice", type=float, default=None,
+                     help="Foreground only: return after this many seconds "
+                          "if the predicate is still false (exit 8; run "
+                          "again). Defaults to 540 where background "
+                          "completions do not wake the session; 0 disables")
+    pwf.add_argument("--wait-id", default=None, help=argparse.SUPPRESS)
+    pwf.add_argument("--rearmed-from", default=None, help=argparse.SUPPRESS)
+    pwf.add_argument("--json", action="store_true")
+    pwf.set_defaults(func=cmd_wait_for)
+
+    prm = sub.add_parser(
+        "rearm",
+        help="Re-arm dead-but-unfinished watchers and waits (the "
+             "SIGKILL/reboot complement of the termination invariant)")
+    prm.add_argument("--dry-run", action="store_true",
+                     help="List what would be re-armed without spawning")
+    prm.add_argument("--now", action="store_true",
+                     help="Ignore the grace window; supersede immediately")
+    prm.add_argument("--json", action="store_true")
+    prm.set_defaults(func=cmd_rearm)
+
+    pss = sub.add_parser(
+        "stuck-scan",
+        help="Detect live watchers/waits with no progress inside the "
+             "threshold → structured failure dump + notification")
+    pss.add_argument("--threshold-min", type=float, default=None,
+                     help="Stall threshold in minutes (default: "
+                          "BROOMVA_P9_STUCK_MIN or 45; floor: 1 minute)")
+    pss.add_argument("--renotify", action="store_true",
+                     help="Notify again even within the same stall episode")
+    pss.add_argument("--json", action="store_true")
+    pss.set_defaults(func=cmd_stuck_scan)
+
+    prt = sub.add_parser(
+        "report",
+        help="Render termination reports (state + next action) for tracked "
+             "watchers and waits — the read-side of the termination invariant")
+    prt.add_argument("--pr", default=None, help="Filter to one PR number")
+    prt.add_argument("--repo", default=None, help="Filter to OWNER/REPO")
+    prt.add_argument("--limit", type=int, default=10,
+                     help="Max reports when unfiltered (default 10)")
+    prt.add_argument("--json", action="store_true")
+    prt.set_defaults(func=cmd_report)
+
+    pn = sub.add_parser(
+        "notify",
+        help="Push a message through the configured notify channels "
+             "(also the channel smoke test)")
+    pn.add_argument("title")
+    pn.add_argument("--body", default="")
+    pn.add_argument("--kind", default="manual")
+    pn.add_argument("--json", action="store_true")
+    pn.set_defaults(func=cmd_notify)
+
+    pd = sub.add_parser("doctor", help="Health-check P9 dependencies")
+    pd.set_defaults(func=cmd_doctor)
+
+    pc = sub.add_parser("conformance",
+                        help="Run the full pytest battery (unit + integration + chaos)")
+    pc.add_argument("-v", "--verbose", action="store_true",
+                    help="Verbose pytest output (-v)")
+    pc.add_argument("-k", default=None,
+                    help="Filter expression passed through to pytest -k")
+    pc.set_defaults(func=cmd_conformance)
+
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return args.func(args)
+    except P9Error as e:
+        print(f"p9: {e}", file=sys.stderr)
+        return e.code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

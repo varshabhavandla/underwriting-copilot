@@ -4,7 +4,7 @@ Never edit silently; supersede with a new entry.
 ## D-001 Human makes every final credit decision (hard constraint)
 Status: accepted (given by builder). The system may prepare, validate, flag, and advance workflow only. Decision recording requires an authenticated underwriter role. Pipeline status is never "approved".
 
-## D-002 Language/framework (default; builder not yet asked-and-answered)
+## D-002 Language/framework (SUPERSEDED by D-008)
 Options: Python+FastAPI; TypeScript+Node; Go. Choice: Python 3.12 + FastAPI. Rationale: existing foundation is Python; strongest document/ML/eval ecosystem; boring and widely adopted. Status: default, awaiting confirmation.
 
 ## D-003 Cloud and data store (default)
@@ -25,5 +25,10 @@ Not decided yet: database (Vercel marketplace Postgres vs AWS RDS), object stora
 Constraints found (S-7): Hobby plan is restricted to non-commercial personal use; any production or revenue-linked use needs Pro or Enterprise. Pro allows up to 5 regions. Routing Middleware runs in every region regardless of region settings, so no regulated-data logic in middleware.
 Rule: nothing is deployed, and no account or paid plan is created, without asking the builder first. Local dev stays Docker Compose.
 
-## D-008 Language/stack (OPEN, recommendation pending builder answer)
-Reopens D-002. Options: (a) Python/FastAPI (current ~300-line foundation); (b) TypeScript + Next.js on Vercel with Postgres. Considerations: Vercel is TypeScript-native; the SRI patterns the builder wants (RLS tests, verify, hooks) are written for a TS/Bun stack; document extraction calls an LLM API and does not need Python. Recommendation: (b) for app and API, keep Python only for the evaluation harness if useful. Not changed until the builder confirms.
+## D-008 Language/stack: TypeScript on Vercel (accepted, builder, 2026-10-21)
+Supersedes D-002. Choice: TypeScript (strict) on Node 22, Vitest for tests, npm, deployed to Vercel (D-007). Rationale: Vercel is TypeScript-native; LLM extraction calls an API and needs no Python. The earlier Python foundation (about 300 lines) was ported 1:1 to `workspace/app/src` with the same 6 fixture cases; money is held as integer cents, not floats.
+Next.js app, database, object storage and background jobs are still open (B-113); Python may return only for the evaluation harness if it earns its place. Nothing is deployed.
+
+## D-009 Workflow skills: broomva/skills, MIT (accepted, builder, 2026-10-21)
+Use skills from https://github.com/broomva/skills (public, MIT), copied into `.agents/skills/` with the license and commit recorded in `.agents/skills/THIRD_PARTY.md`. Do not use material from any other organization's private repositories. Review a script before first use; `bookkeeping` has an optional external API call that stays disabled (see THIRD_PARTY.md).
+

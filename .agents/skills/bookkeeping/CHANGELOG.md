@@ -1,0 +1,47 @@
+# Changelog
+
+## [1.5.0] — 2026-09-27
+- Added the **grounding floor** at the promotion stage (BRO-2614): a would-be new page is refused unless its derived `core_claim` — minus the item's recorded section heading — names the entity (a person by surname, a one- or two-word name by every word, a longer slug by its head noun plus half its words; whole words, plural- and accent-folded), or the heading is or begins with the entity. `section_heading` is reserved: sources cannot supply it. Deterministic, runs before the coherence call, cannot fail open. On the workspace#789 cohort it refuses all 13 auto-promoted junk pages and passes both kept pages; on the door's real input (134 would-be pages from 60 raw notes) it refuses 124: 107/114 coherence rejects and 17/20 coherence accepts (~3 of those arguably legitimate on a hand read). Run-log entries carry `grounding: {floor, refused}`.
+- The per-axis Nous floor (`AXIS_FLOOR`) stays 0, now with a fixture-backed reason: the (n, s, r) scores are note-level, so the kept and junk pages of one note share a triple, and `relevance >= 1 ∧ specificity >= 1` refuses a kept page while admitting three junk ones.
+- Format-2 ingest records `metadata.section_heading`.
+- **Graph root resolution is worktree-aware**: with no policy block and no `KG_*`/`BROOMVA_ROOT`, the root is the nearest enclosing git toplevel holding `research/entities` — a `.git` dir whose HEAD is git's (symbolic ref or SHA), or a `gitdir:` file whose target's is — and `~/broomva` only outside any such checkout. `index` from a worktree no longer writes the main checkout's catalog; an end-to-end test runs it in a subprocess and asserts the main catalog is byte-identical.
+
+## [1.4.0] — 2026-09-18
+- Added the **entity coherence gate** at the promotion stage. The sum gate's false positives were identity failures — a heading, a person's name, or a lifted phrase filed as a `concept` — not score failures: on 9 human-quarantined junk pages vs 30 accepted, specificity AUC 0.60, relevance AUC 0.81, a Noul "is the title a coherent node the core_claim is about?" AUC 0.98 (jev-1.13.0, 2026-09-18). `promote_item` now asks that one question (stdlib POST to TypeSafe systemone, 10 s timeout, no SDK) before a NEW page reaches disk; `p < 0.5` sends the would-be page to `~/.config/bookkeeping/quarantine/<date>-coherence/` with the score in its frontmatter instead of `research/entities/`. Never deletes.
+- Criteria are type-aware: a product or personal name is a legitimate title for `tool`/`person`/`project`/`org`; for concept-like types it is the failure mode. Two accepted `tool` pages named after products had scored 0.42/0.43 under type-blind criteria.
+- Unavailable transport (no key, malformed key, HTTP error, timeout, malformed response) passes through — status quo — but prints one stderr line per distinct cause per run and is counted. Causes are constant per condition (no per-item payload), a malformed key is refused before a request is built, and the key is redacted from any cause line. Run-log entries carry `coherence: {enabled, checked, rejected, remembered, unavailable}`; `run` prints a `Coherence gate:` summary line.
+- A rejection is remembered through two doors: a `(type, slug)` refused earlier in the same run (the only door a dry run has), and the quarantined copy on disk from any earlier run; either skips the item without a call and the copy is never overwritten; moving or deleting it re-opens the question. `--dry-run` still asks the classifier (the verdict is the preview) but writes nothing, and a refused item is counted as neither created nor promoted by `run` or `promote` — in dry-run `promote_item` returns None for both outcomes, so callers ask `coherence_rejected_slug(slug, item)`, which is type-scoped through the same inference `promote_item` applies. `promote_item`'s return contract is documented for every None. `promote` now registers a slug as existing only when a page was written (or would be, in dry-run); previously a tombstoned or non-entity-shaped slug was registered too.
+- `BOOKKEEPING_COHERENCE_GATE=0` disables the gate. Default ON when a key is present — acceptable here, unlike for the scoring judge, because the gate runs only on new promotions, costs ~300 ms / ~$0.00005 per call, and quarantines rather than deletes. The egress is stated: slug, title, derived claim and a 1500-char excerpt of each new page go to the API.
+- Suite hermeticity: a root-level `conftest.py` forces the gate off for every test; `tests/test_coherence_hermeticity.py` asserts it from a module that does not opt back in; `tests/test_coherence_gate.py` re-enables it with a stubbed transport.
+
+## [1.3.0] — 2026-08-10
+- Added `backfill-revisions`: replays supersessions the graph already recorded (merge tombstones) into the typed envelope, stamping `recorded_at` with the HISTORICAL `merged_at` rather than the migration date. Idempotent; refuses to invent a date; never derives supersessions from `aliases:` (those are `aka` search synonyms) or from prose.
+- `_apply_revision_envelope` accepts an explicit `recorded_at`; the unchanged predicate distinguishes a SUPPLIED stamp from a defaulted one, so ordinary replay stays byte-identical across days.
+- Calibrated the supersession audit on the corpus that migration produces: zero envelope findings on every migrated page, 13/13 audit branches reachable. Positive controls are now permanent tests, each matched on its own message — zero findings on a clean corpus is otherwise indistinguishable from a checker that never fires, and asserting only the field is vacuous when several branches share one.
+- **Decision: no hard gate.** 10 of 13 checks are DEFINITIONAL (the predicate *is* the property, so asking its false-positive rate asks whether `x == x`); only 3 are proxies with a gap a rate could measure, and the corpus measures none of them; and 5 pages could not bound a rate anyway. The 1 genuine heuristic is unmeasurable on real data (tombstones carry no `recorded_at`), and 5 of 943 pages carrying the envelope is too little to gate on. Receipt: `references/supersession-calibration-2026-08-10.json`.
+
+## [1.2.1] — 2026-08-10
+- `revise`/`merge` now write `updated` QUOTED. Emitting it bare un-quoted a page that already had `updated: "YYYY-MM-DD"`, so the repo's own unquoted-date lint warned on every page the command touched — the writer failing the gate it is supposed to satisfy. Found by dogfooding the merged CLI, not by the suite.
+- `valid_from` is written after `recorded_at` exists, so its `after=` anchor resolves instead of silently landing at the end of the frontmatter.
+
+## [1.2.0] — 2026-08-10
+- Added the typed temporal revision envelope, producer-first: `promote` stamps system-time `recorded_at`; `valid_from` is written only when a source supplies it and is never inferred from prose, page dates, or the ingest timestamp.
+- Added `revise` — the explicit correction workflow that emits `supersedes` + `revision_link`; `merge` now records the same envelope on the canonical with the tombstone as its authorizing record.
+- Added warning-only, `--temporal`-gated supersession validation (stamp parseability, future `recorded_at`, wikilink form, self-supersession, unresolvable targets, missing authorizing record, timeline inversion). Default `lint` output is unchanged.
+- `recorded_at` is excluded from the content-identity guard, so replay stays byte-identical; legacy pages are not backfilled by the update path.
+- `revision_link` is a LIST (one entry per authorizing record); both correction workflows REFUSE rather than repair a malformed or duplicated envelope, and `merge` aborts instead of half-merging.
+- Contract in `references/temporal-revision-envelope.md`; live-graph parity receipt in `references/temporal-revision-calibration-2026-08-10.json`. No hard gate: the new checks are uncalibrated because no entity yet carries the envelope.
+
+## [1.1.0] — 2026-08-09
+- Added opt-in `lint --temporal` warnings for stale `updated` metadata and undated mutable state in catalog-visible claims, headings, and explicit labels.
+- Kept temporal findings non-blocking and default lint behavior unchanged; semantic contradiction/supersession remains outside the mechanical linter.
+- Added focused boundary tests and a machine-readable clean-workspace calibration receipt over 928 entity pages.
+
+## [1.0.0] — 2026-06-27
+- Consolidated into the `broomva/skills` monorepo (BRO-1561); canonical install is now `npx skills add broomva/skills --skill bookkeeping`. The standalone `broomva/bookkeeping` repo remains functional through its deprecation window.
+- bstack primitive **P6** — the universal knowledge engine. Implements the LLM Wiki pattern: raw sources → score → promote → entity graph → synthesize.
+- Pipeline subcommands: `run`, `score`, `promote`, `synthesize`, `lint`, `index`, `status`, `file`, `query`, `ingest`, `bench`.
+- `render` — Category-B lossless MD→HTML projection (Format Discernment / P18 · Audience).
+- `replay` — frozen-snapshot scoring for shadow-dream-safe consolidation (P13 · Dream stop-gradient).
+- `merge` — durable entity dedup via tombstone mechanism (BRO-1442).
+- Two-tier Nous scoring gate (novelty + specificity + relevance, ≥5/9 → Layer 3); alias-indexing in the catalog (BRO-1423).

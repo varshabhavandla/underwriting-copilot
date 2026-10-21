@@ -13,7 +13,10 @@ jobs:
         working-directory: workspace/app
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-node@v4
         with:
-          python-version: "3.12"
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: workspace/app/package-lock.json
+      - run: npm ci
       - run: bash scripts/verify.sh

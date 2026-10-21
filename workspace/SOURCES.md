@@ -10,3 +10,4 @@ S-7 | https://vercel.com/docs/limits/fair-use-guidelines | Vercel Fair Use Guide
 S-8 | https://vercel.com/docs/security/compliance and https://security.vercel.com/ | Vercel security/compliance, Trust Center (search results only; pages not opened) | 2026-10-21 | Reported SOC 2 Type 2 (Security, Confidentiality, Availability), reports behind access request; region and middleware notes. Verify before relying.
 S-9 | withdrawn | not used | | |
 S-10 | withdrawn | not used | | |
+S-11 | https://github.com/broomva/skills (commit 3876707d) | broomva/skills, MIT | 2026-10-21 | Installed workflow skills; license and notes in .agents/skills/THIRD_PARTY.md
