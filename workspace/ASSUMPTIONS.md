@@ -12,3 +12,6 @@ Confidence: high | medium | low. Label: assumed unless a source is cited in SOUR
 | A-7 | Reg B business-credit summary (S-5) is correct. | low | eCFR text differs from the fetch summary. |
 | A-8 | Vercel Functions can host the FastAPI API for the MVP, with long extraction jobs handled by a separate async mechanism. | low | Function duration/size limits or queue options do not fit document processing (unverified). |
 | A-9 | Vercel's reported SOC 2 Type 2 helps, but a lender will still require its own subprocessor review of every vendor, including Vercel. | medium | A target lender accepts hosted-platform attestations alone. |
+| A-10 | Community-bank PLP lenders feel enough pain around SOP conformance and credit memo prep to pay for file review. | low | Lender interviews show the pain is elsewhere or already covered by their LOS. |
+| A-11 | nCino/Parlay will not quickly deliver deep SOP-cited file review. | low | An nCino or Parlay release covers it. |
+| A-12 | Mid-size and small lenders not on nCino exist in large enough numbers to reach LOS-agnostically. | low | Lender-landscape research shows the segment is small or locked into integrated suites. |

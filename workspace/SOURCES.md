@@ -11,3 +11,14 @@ S-8 | https://vercel.com/docs/security/compliance and https://security.vercel.co
 S-9 | withdrawn | not used | | |
 S-10 | withdrawn | not used | | |
 S-11 | https://github.com/broomva/skills (commit 3876707d) | broomva/skills, MIT | 2026-10-21 | Installed workflow skills; license and notes in .agents/skills/THIRD_PARTY.md
+S-12 | https://legacy.sba.gov/article/2023/08/10/business-loan-program-improvements | SBA: business loan program improvements (Aug 1, 2023 changes) | 2026-10-21 | SBA determines eligibility from ETRAN data; fraud review; affiliation on ownership only; lender BSA/KYC remains
+S-13 | https://www.occ.treas.gov/publications-and-resources/publications/comptrollers-handbook/files/commercial-loans/pub-ch-commercial-loans.pdf | OCC Comptroller's Handbook, Commercial Loans (Section 206), narrative 1990 / procedures 1998 | 2026-10-21 | Examiner view of commercial credit files and analysis (dated)
+S-14 | https://www.consumerfinance.gov/1071-rule/ and https://www.federalregister.gov/documents/2026/05/01/2026-08494/small-business-lending-under-the-equal-credit-opportunity-act-regulation-b | CFPB small business lending (1071) (search summary only) | 2026-10-21 | Reported compliance date Jan 1, 2028; verify on the Federal Register
+S-15 | OCC rating-credit-risk, leveraged-lending handbooks and 2025 venture lending bulletin (search summary only) | OCC repayment-source principles | 2026-10-21 | Cash flow as primary repayment; verify wording
+S-16 | https://www.ncino.com/sba | nCino SBA solution page | 2026-10-21 | Features: document collection, E-Tran, forms, workflow rules; no metrics or certifications
+S-17 | https://www.ncino.com/credit-analysis and nCino pages (search summary only) | nCino Credit Analysis Suite, nIQ spreading | 2026-10-21 | Credit memo generation and automated spreading claims
+S-18 | https://finviz.com/news/400457/ncino-partners-with-parlay-to-power-ai-native-sba-lending-nationwide (Business Wire, 2026-10-08) | nCino and Parlay partnership release | 2026-10-21 | Parlay intake/eligibility/structuring; 80 percent and $500M-inquiries claims
+S-19 | https://taktile.com/credit-decision-automation and related pages (search summary only) | Taktile | 2026-10-21 | Low-code decision engine, backtesting, data marketplace
+S-20 | zest.ai blog and third-party pages (search summary only) | Zest AI / Upstart comparisons | 2026-10-21 | Explainability and fair-lending claims; consumer focus
+S-21 | https://www.ocrolus.com/small-business-funding/ and related pages (search summary only) | Ocrolus small-business funding | 2026-10-21 | Extraction and cash-flow analytics claims
+S-22 | https://www.biz2x.com/sba-loan-software/optimizing-sba-loan-software-for-banks/ (search result only, not opened) | Biz2X SBA loan software article | 2026-10-21 | Vendor-authored claims that SBA rules are embedded; unverified

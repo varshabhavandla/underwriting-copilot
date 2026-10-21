@@ -13,8 +13,8 @@ Options: AWS; GCP; Azure. Choice: AWS + Postgres (RDS) with row-level security. 
 ## D-004 Repo layout
 Single repo `underwriting-copilot`; work under `workspace/`. Supersedes the earlier `underwriting/` subfolder layout. Existing foundation moved to `workspace/app/`.
 
-## D-005 Wedge (provisional, pending B-102)
-Hypothesis: SBA 7(a) file preparation and exception detection for small community lenders. Not final until the competitive scan.
+## D-005 Wedge (SUPERSEDED by D-010)
+Hypothesis: SBA 7(a) file preparation and exception detection for small community lenders.
 
 ## D-006 Domain
 Commercial lending (SME and SBA). Supersedes docs/decisions/0002 (domain open).
@@ -32,3 +32,8 @@ Next.js app, database, object storage and background jobs are still open (B-113)
 ## D-009 Workflow skills: broomva/skills, MIT (accepted, builder, 2026-10-21)
 Use skills from https://github.com/broomva/skills (public, MIT), copied into `.agents/skills/` with the license and commit recorded in `.agents/skills/THIRD_PARTY.md`. Do not use material from any other organization's private repositories. Review a script before first use; `bookkeeping` has an optional external API call that stays disabled (see THIRD_PARTY.md).
 
+
+## D-010 Wedge (provisional, 2026-10-21, supersedes D-005)
+Choice: SBA 7(a) file review and credit-memo drafting for community-bank PLP lenders: cited extraction, SOP-mapped exception detection, human underwriter decision. Standard 7(a) and 7(a) Small first.
+Rationale (docs/COMPETITIVE_SCAN.md): front-end intake and eligibility is now contested by nCino plus Parlay; SBA determines eligibility itself; lender-owned analysis and documentation exposure remains. Rejected: intake wedge, ML credit scoring, generic extraction as a product.
+Status: provisional until a lender conversation tests A-10 to A-12. Owner of the next review: builder.

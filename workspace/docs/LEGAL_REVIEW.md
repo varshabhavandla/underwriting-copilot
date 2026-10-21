@@ -12,3 +12,6 @@ Not legal advice. Items accumulate here for counsel.
 9. SBA citizenship/residency rules changed by a March 2026 notice; confirm current text before encoding.
 11. Vercel as a service provider for borrower NPI: data processing terms, subprocessor list, and whether the plan tier offers the terms a lender will want.
 12. Third-party skills from broomva/skills are MIT-licensed; the license notice is kept with them. No material from any other organization's private repositories is used.
+13. Whether SBA program rules restrict or require disclosure of vendor use in file preparation, and the lender's attestation when a tool computes DSC and collateral figures.
+14. Marketing claims about competitors (nCino, Parlay, Ocrolus) must be limited to verified, sourced statements.
+15. Section 1071 data collection (reported compliance date 2028): confirm applicability to our customers before building.

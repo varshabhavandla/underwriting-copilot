@@ -2,9 +2,13 @@
 Status: todo | doing | done | blocked. Priority: P0 highest.
 
 ## Phase 1
-- B-101 P0 doing Regulatory/process map. SBA 7(a)/504 done (docs/SBA_PROCESS_MAP.md). Remaining: conventional SME (OCC/FDIC/Fed sources), SOP appendices 14,15,16,19, Reg B, 504 detail.
+- B-101 P0 done  Regulatory/process map (SBA: docs/SBA_PROCESS_MAP.md incl. appendices 14,15(part),16,17,19; conventional: docs/CONVENTIONAL_SME_PROCESS.md). Follow-ups B-111, B-115.
+- (was) B-101 SBA 7(a)/504 done (docs/SBA_PROCESS_MAP.md). Remaining: conventional SME (OCC/FDIC/Fed sources), SOP appendices 14,15,16,19, Reg B, 504 detail.
+- B-102 P0 done  Competitive scan and provisional wedge (docs/COMPETITIVE_SCAN.md, D-010). Follow-up B-116.
 - B-103 P1 todo  Time-to-decision measurement plan (measured vs estimated; simulated baseline definition).
 - B-113 P1 todo  Vercel fit check: function duration/payload limits, background jobs, Postgres and storage options, region pinning, data-handling terms; read the Trust Center SOC 2 scope. Decide D-008 (data store, storage, jobs).
+- B-115 P1 todo  Read SOP Appendix 15 in full (equity injection percentages) and 504 chapters before encoding those rule packs; spot-check every rule vs the published SOP (see C-201).
+- B-116 P0 todo  Validate wedge: open vendor trust centers, find other SBA-specific vendors, and prepare 5 lender interview questions (A-10..A-12). Needs builder to arrange conversations.
 ## Phase 2
 - B-201 P0 todo  Reference architecture + Mermaid (components, flows, trust boundaries, tenant isolation, per-tenant encryption).
 - B-202 P0 todo  Agentic layer design (LLM gateway, PII redaction, injection defenses vs OWASP LLM Top 10, approval gates, immutable audit).
@@ -40,3 +44,8 @@ Loop 2 (lender CISO / examiner view), objections and disposition:
 - C-201 P0: Rules were derived from a script-parsed .docx; a wrong threshold in the checklist would mislead underwriters. Action: B-111 spot-check every encoded rule against the published SOP, store rule -> SOP section mapping with SOP version, and fail CI if the mapping is missing.
 - C-202 P1: SOP changes frequently (8.1 effective 2026-10-01; notices in between). Action: B-112 rule packs versioned by SOP version and effective date; staleness check against SBA's SOP page.
 - C-203 P1: No evidence yet that AI-prepared files satisfy a lender's model-risk and vendor-management expectations. Action: covered by B-203/B-205; also LEGAL_REVIEW items 1 and 7.
+
+Loop 3 (lender CISO / examiner view), objections and disposition:
+- C-301 P0: Reg B, 1071 and OCC points rest on search summaries and a 1990/1998 handbook. Action: B-115/B-116 plus counsel items 13-15; no rule ships on a summary alone.
+- C-302 P1: Wedge rests on absence-of-evidence about competitors. Action: B-116 verifies trust centers and searches for more SBA vendors; keep D-010 provisional.
+- C-303 P1: Nothing yet measured about time saved; the only 80 percent figure we found is an unnamed-customer vendor claim. Action: B-103 and B-308 define a simulated baseline; report by file class.
