@@ -4,7 +4,8 @@
  * provisioned. Who someone is (tenant, role) comes from our database, never from token claims.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { createRemoteJWKSet, errors, jwtVerify, type JWTVerifyGetKey } from "jose";
+import { createLocalJWKSet, errors, jwtVerify, type JSONWebKeySet, type JWTVerifyGetKey } from "jose";
+import { fetchPublic, UnsafeUrl, type Fetched } from "./safeFetch";
 
 export interface OidcConfig {
   issuer: string;
@@ -22,34 +23,28 @@ export const ALLOWED_ALGS = ["RS256", "PS256", "ES256"] as const;
 const b64url = (b: Buffer) => b.toString("base64url");
 const TIMEOUT_MS = 5000;
 
-const isLoopback = (u: URL) => ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname);
-/** Endpoints must be https; plain http is accepted only for loopback outside production (local fake identity provider). */
-function assertEndpoint(raw: string, what: string): URL {
-  const u = new URL(raw);
-  const ok = u.protocol === "https:" || (u.protocol === "http:" && isLoopback(u) && process.env["NODE_ENV"] !== "production");
-  if (!ok) throw new AuthError("insecure_endpoint", `${what} must be https`);
-  return u;
-}
-
 const cache = new Map<string, { at: number; meta: OidcMetadata }>();
-export async function discover(cfg: OidcConfig, fetchImpl: typeof fetch = fetch, now = Date.now()): Promise<OidcMetadata> {
+type Get = (url: string, init?: RequestInit) => Promise<Fetched>;
+const asAuthError = async <T>(p: Promise<T>, code: string): Promise<T> => p.catch((e) => { throw e instanceof AuthError ? e : new AuthError(code, e instanceof UnsafeUrl ? e.message : undefined); });
+
+export async function discover(cfg: OidcConfig, get: Get = fetchPublic, now = Date.now()): Promise<OidcMetadata> {
   const hit = cache.get(cfg.issuer);
   if (hit && now - hit.at < 3_600_000) return hit.meta;
-  const base = assertEndpoint(cfg.issuer, "issuer").toString().replace(/\/$/, "");
-  const res = await fetchImpl(`${base}/.well-known/openid-configuration`, { redirect: "error", signal: AbortSignal.timeout(TIMEOUT_MS) });
+  const base = cfg.issuer.replace(/\/$/, "");
+  const res = await asAuthError(get(`${base}/.well-known/openid-configuration`), "insecure_endpoint");
   if (!res.ok) throw new AuthError("discovery_failed");
-  const m = (await res.json()) as Partial<OidcMetadata>;
+  const m = res.json() as Partial<OidcMetadata>;
   // RFC 8414 / OIDC Discovery: the issuer in the document must equal the one we configured, or a malicious server could impersonate another
   if (m.issuer !== cfg.issuer) throw new AuthError("issuer_mismatch");
   for (const k of ["authorization_endpoint", "token_endpoint", "jwks_uri"] as const) {
     if (typeof m[k] !== "string") throw new AuthError("discovery_incomplete");
-    assertEndpoint(m[k]!, k);
+    if (!/^https:\/\//.test(m[k]!) && !(process.env["NODE_ENV"] !== "production" && /^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(m[k]!))) throw new AuthError("insecure_endpoint", `${k} must be https`);
   }
   const meta = m as OidcMetadata;
   cache.set(cfg.issuer, { at: now, meta });
   return meta;
 }
-export const clearDiscoveryCache = () => cache.clear();
+export const clearDiscoveryCache = (issuer?: string) => { if (issuer) cache.delete(issuer); else cache.clear(); };
 
 export function pkce(): { verifier: string; challenge: string } {
   const verifier = b64url(randomBytes(32));
@@ -66,13 +61,13 @@ export function authorizationUrl(meta: OidcMetadata, cfg: OidcConfig, p: { state
   return u.toString();
 }
 
-export async function exchangeCode(meta: OidcMetadata, cfg: OidcConfig, code: string, verifier: string, fetchImpl: typeof fetch = fetch): Promise<string> {
+export async function exchangeCode(meta: OidcMetadata, cfg: OidcConfig, code: string, verifier: string, get: Get = fetchPublic): Promise<string> {
   const body = new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: cfg.redirectUri, code_verifier: verifier, client_id: cfg.clientId });
   const headers: Record<string, string> = { "content-type": "application/x-www-form-urlencoded", accept: "application/json" };
   if (cfg.clientSecret) headers["authorization"] = "Basic " + Buffer.from(`${encodeURIComponent(cfg.clientId)}:${encodeURIComponent(cfg.clientSecret)}`).toString("base64");
-  const res = await fetchImpl(meta.token_endpoint, { method: "POST", body, headers, redirect: "error", signal: AbortSignal.timeout(TIMEOUT_MS) });
+  const res = await asAuthError(get(meta.token_endpoint, { method: "POST", body, headers }), "token_exchange_failed");
   if (!res.ok) throw new AuthError("token_exchange_failed");
-  const j = (await res.json()) as { id_token?: unknown; token_type?: unknown };
+  const j = res.json() as { id_token?: unknown; token_type?: unknown };
   if (typeof j.id_token !== "string" || j.id_token.length > 16_384) throw new AuthError("no_id_token");
   return j.id_token;
 }
@@ -101,10 +96,36 @@ export async function verifyIdToken(
   }
 }
 
-const jwksCache = new Map<string, JWTVerifyGetKey>();
-/** Remote key set with jose's built-in caching and refresh cooldown; keys come only from the provider's discovered jwks_uri. */
-export function keysFor(meta: OidcMetadata): JWTVerifyGetKey {
-  let k = jwksCache.get(meta.jwks_uri);
-  if (!k) { k = createRemoteJWKSet(new URL(meta.jwks_uri), { timeoutDuration: TIMEOUT_MS, cooldownDuration: 30_000, cacheMaxAge: 3_600_000 }); jwksCache.set(meta.jwks_uri, k); }
-  return k;
+const jwksCache = new Map<string, { at: number; set: JSONWebKeySet }>();
+const lastForced = new Map<string, number>();
+export const clearKeyCache = () => { jwksCache.clear(); lastForced.clear(); };
+const JWKS_TTL_MS = 3_600_000, JWKS_COOLDOWN_MS = 30_000;
+
+async function loadKeys(uri: string, get: Get, now: number): Promise<JSONWebKeySet> {
+  const res = await asAuthError(get(uri), "jwks_fetch_failed");
+  if (!res.ok) throw new AuthError("jwks_fetch_failed");
+  const j = res.json() as JSONWebKeySet;
+  if (!Array.isArray(j.keys) || j.keys.length > 20) throw new AuthError("jwks_invalid");
+  jwksCache.set(uri, { at: now, set: j });
+  return j;
+}
+
+/**
+ * Provider keys, fetched through the same guarded client as everything else, cached for an hour. An unknown key id (a provider rotating keys) triggers
+ * one refetch, at most once per 30 seconds per provider, so a stream of forged key ids cannot make us hammer the provider.
+ */
+export function keysFor(meta: OidcMetadata, get: Get = fetchPublic): JWTVerifyGetKey {
+  return async (header, token) => {
+    const now = Date.now();
+    const cached = jwksCache.get(meta.jwks_uri);
+    const set = cached && now - cached.at < JWKS_TTL_MS ? cached.set : await loadKeys(meta.jwks_uri, get, now);
+    try {
+      return await createLocalJWKSet(set)(header, token);
+    } catch (e) {
+      if (!(e instanceof errors.JWKSNoMatchingKey)) throw e;
+      if (now - (lastForced.get(meta.jwks_uri) ?? 0) < JWKS_COOLDOWN_MS) throw e;
+      lastForced.set(meta.jwks_uri, now);
+      return await createLocalJWKSet(await loadKeys(meta.jwks_uri, get, now))(header, token);
+    }
+  };
 }

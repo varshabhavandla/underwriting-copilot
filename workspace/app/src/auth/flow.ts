@@ -1,7 +1,7 @@
 /** The short-lived, encrypted cookie that carries state, nonce and PKCE verifier across the redirect to the identity provider. */
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 
-export interface FlowState { state: string; nonce: string; verifier: string; returnTo: string; exp: number }
+export interface FlowState { state: string; nonce: string; verifier: string; returnTo: string; exp: number; /** organization name, in per-tenant mode */ slug?: string }
 const AAD = Buffer.from("uw-oidc-flow-v1");
 const key = (master: Buffer) => Buffer.from(hkdfSync("sha256", master, Buffer.from("uw-auth"), Buffer.from("oidc-flow-key"), 32));
 

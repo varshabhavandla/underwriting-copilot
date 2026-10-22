@@ -47,6 +47,14 @@ describe("production configuration guards (V12.3.1, V13.2.3)", () => {
   it("refuses the development identity in production even when sign-in is configured", () => {
     expect(prod(GOOD, { DEV_TENANT_ID: "e320705d-c416-4931-9885-85e4971fff32" })).toThrow(/DEV_TENANT_ID/);
   });
+  it("per-organization mode needs an https APP_ORIGIN and no deployment-wide provider settings (D-030)", () => {
+    const pt = { SSO_MODE: "per_tenant", OIDC_ISSUER: undefined, OIDC_CLIENT_ID: undefined, OIDC_CLIENT_SECRET: undefined, OIDC_REDIRECT_URI: undefined };
+    expect(prod(GOOD, { ...pt, APP_ORIGIN: "https://app.example.com" })).not.toThrow();
+    expect(prod(GOOD, { ...pt, APP_ORIGIN: undefined })).toThrow(/APP_ORIGIN/);
+    expect(prod(GOOD, { ...pt, APP_ORIGIN: "http://app.example.com" })).toThrow(/https/);
+    expect(prod(GOOD, { ...pt, APP_ORIGIN: "https://app.example.com", DEV_TENANT_ID: "e320705d-c416-4931-9885-85e4971fff32" })).toThrow(/DEV_TENANT_ID/);
+    expect(prod(GOOD, { ...pt, APP_ORIGIN: "https://app.example.com", DATABASE_URL: "postgres://u:Zk3-long@db.example.com/app" })).toThrow(/sslmode/); // secret-scan:allow (synthetic test value)
+  });
   it("control: the same development URL is accepted outside production", () => { process.env = { ...saved, NODE_ENV: "development", DATABASE_URL: "postgres://uw_app:uw_app_dev@127.0.0.1:54329/uw" }; expect(() => serverEnv()).not.toThrow(); });
 });
 

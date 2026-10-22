@@ -157,7 +157,7 @@ describe("route policy (authentication)", () => {
 describe("page policy (authentication)", () => {
   const walkP = (d: string): string[] => readdirSync(d).flatMap((f) => { const p = join(d, f); return statSync(p).isDirectory() ? (p.endsWith("/api") ? [] : walkP(p)) : p.endsWith("page.tsx") ? [p] : []; });
   const pages = walkP(join(import.meta.dirname, "..", "..", "app"));
-  const PUBLIC = new Map([["forbidden", "tells the visitor they have no access; contains no data"]]);
+  const PUBLIC = new Map([["forbidden", "tells the visitor they have no access; contains no data"], ["signin", "where anonymous visitors start; contains no data"], ["signin/continue", "same-site hop to the login route; contains no data"]]);
   it("finds the pages", () => expect(pages.length).toBeGreaterThanOrEqual(6));
   it.each(pages.map((p) => [p.split("/app/app/")[1]!.replace(/\/?page\.tsx$/, "") || "(home)", p]))("page %s requires a session or is a documented public page", (name, path) => {
     if (PUBLIC.has(name!)) return;

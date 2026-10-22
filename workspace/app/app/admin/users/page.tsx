@@ -4,7 +4,8 @@ import { createUser, linkIdentity, revokeUserSessions, setUserDisabled, setUserR
 import { listUsers } from "@/admin/queries";
 import { withTenant } from "@/db/client";
 import { requireSession } from "@/server/guard";
-import { oidcConfig } from "@/server/services";
+import { getMyIdp } from "@/admin/sso";
+import { globalIdp } from "@/server/services";
 
 export const dynamic = "force-dynamic";
 const ROLES = ["viewer", "processor", "underwriter", "admin"];
@@ -18,7 +19,7 @@ const val = (f: FormData, k: string) => String(f.get(k) ?? "");
 async function create(f: FormData): Promise<void> { "use server"; const { s, c } = await ctx(); return back(await createUser(s.sql, c, val(f, "email"), val(f, "role"))); }
 async function changeRole(f: FormData): Promise<void> { "use server"; const { s, c } = await ctx(); return back(await setUserRole(s.sql, c, val(f, "userId"), val(f, "role"))); }
 async function toggle(f: FormData): Promise<void> { "use server"; const { s, c } = await ctx(); return back(await setUserDisabled(s.sql, c, val(f, "userId"), val(f, "disable") === "1")); }
-async function link(f: FormData): Promise<void> { "use server"; const { s, c } = await ctx(); return back(await linkIdentity(s.sql, c, val(f, "userId"), oidcConfig()?.issuer, val(f, "subject"))); }
+async function link(f: FormData): Promise<void> { "use server"; const { s, c } = await ctx(); return back(await linkIdentity(s.sql, c, val(f, "userId"), (await getMyIdp(s.sql, c))?.issuer ?? globalIdp()?.issuer, val(f, "subject"))); }
 async function unlink(f: FormData): Promise<void> { "use server"; const { s, c } = await ctx(); return back(await unlinkIdentity(s.sql, c, val(f, "userId"))); }
 async function endSessions(f: FormData): Promise<void> { "use server"; const { s, c } = await ctx(); return back(await revokeUserSessions(s.sql, c, val(f, "userId"))); }
 
@@ -29,7 +30,7 @@ export default async function Users({ searchParams }: { searchParams: Promise<{ 
   const hid = (id: string) => <input type="hidden" name="userId" value={id} />;
   return (
     <main>
-      <p><Link href="/review">← Files</Link> · <Link href="/admin/audit">Security events</Link></p>
+      <p><Link href="/review">← Files</Link> · <Link href="/admin/audit">Security events</Link> · <Link href="/admin/sso">Single sign-on</Link></p>
       <h1>Users and access</h1>
       <p>Roles decide what a person can do. Only an underwriter can record a decision. Sign-in itself is handled by the identity provider; link each person&apos;s provider identity here before they can sign in.</p>
       {msg && <p role="status">{msg}</p>}

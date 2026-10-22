@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { cookieValue, resolveSession, SESSION_COOKIE, type Role } from "../auth/session";
+import { loadTenantIdp } from "../auth/idp";
 import type { OidcConfig } from "../auth/oidc";
 import { LocalKeyProvider, masterKeyFromEnv } from "../crypto/fieldCrypto";
 import { connect, withTenant, type Sql } from "../db/client";
@@ -43,17 +44,42 @@ export function infra(): Infra {
   return g.__uw;
 }
 
-export function oidcConfig(): OidcConfig | null {
+export type AuthMode = "per_tenant" | "global" | "dev";
+export function authMode(): AuthMode {
   const e = serverEnv();
-  if (!e.OIDC_ISSUER || !e.OIDC_CLIENT_ID || !e.OIDC_REDIRECT_URI) return null;
+  if (e.SSO_MODE === "per_tenant") return "per_tenant";
+  return e.OIDC_ISSUER && e.OIDC_CLIENT_ID && e.OIDC_REDIRECT_URI ? "global" : "dev";
+}
+export const authEnabled = (): boolean => authMode() !== "dev";
+
+/** The deployment-wide provider (SSO_MODE global). */
+export function globalIdp(): OidcConfig | null {
+  const e = serverEnv();
+  if (e.SSO_MODE !== "global" || !e.OIDC_ISSUER || !e.OIDC_CLIENT_ID || !e.OIDC_REDIRECT_URI) return null;
   return {
     issuer: e.OIDC_ISSUER, clientId: e.OIDC_CLIENT_ID, clientSecret: e.OIDC_CLIENT_SECRET, redirectUri: e.OIDC_REDIRECT_URI,
     requiredAmr: (e.OIDC_REQUIRED_AMR ?? "").split(",").map((x) => x.trim()).filter(Boolean),
   };
 }
 
+/** The one callback URL every organization's provider is told about. */
+export const callbackUri = (): string => {
+  const e = serverEnv();
+  return e.SSO_MODE === "per_tenant" ? `${e.APP_ORIGIN!.replace(/\/$/, "")}/api/auth/callback` : e.OIDC_REDIRECT_URI!;
+};
+
 /** The canonical origin of this application, used to check that state-changing form posts come from our own pages. */
-export const appOrigin = (): string | null => { const c = oidcConfig(); return c ? new URL(c.redirectUri).origin : null; };
+export const appOrigin = (): string | null => {
+  const e = serverEnv();
+  if (e.APP_ORIGIN) return new URL(e.APP_ORIGIN).origin;
+  return e.OIDC_REDIRECT_URI ? new URL(e.OIDC_REDIRECT_URI).origin : null;
+};
+
+/** The provider configured by an organization's administrator, found by the organization name typed at sign-in. Null when unknown, disabled or incomplete. */
+export async function tenantIdp(slug: string): Promise<(OidcConfig & { tenantId: string }) | null> {
+  const { sql, keys } = infra();
+  return loadTenantIdp(sql, keys, slug, callbackUri());
+}
 
 /**
  * Who is calling. With OIDC configured, only a valid session counts and the DEV_* identity is ignored. Without it (local development only; production
@@ -62,7 +88,7 @@ export const appOrigin = (): string | null => { const c = oidcConfig(); return c
 export async function services(): Promise<Services | null> {
   const env = serverEnv();
   const base = infra();
-  if (oidcConfig()) {
+  if (authEnabled()) {
     const cookie = (await headers()).get("cookie");
     const id = await resolveSession(base.sql, cookieValue(cookie, SESSION_COOKIE), env.SESSION_IDLE_MINUTES * 60);
     return id ? { ...base, tenantId: id.tenantId, userId: id.userId, role: id.role, sessionId: id.sessionId } : null;

@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "evals": "tsx scripts/run-evals.ts",
-    "verify": "npm run typecheck && npm run secret-scan && npm run test && npm run evals && npm run eval:extraction >/dev/null && EVAL_N=3 EVAL_OUT=$(mktemp) npm run eval:pipeline >/dev/null && npm run demo >/dev/null && npm run build && npm run e2e && npm run e2e:auth",
+    "verify": "npm run typecheck && npm run secret-scan && npm run test && npm run evals && npm run eval:extraction >/dev/null && EVAL_N=3 EVAL_OUT=$(mktemp) npm run eval:pipeline >/dev/null && npm run demo >/dev/null && npm run build && npm run e2e && npm run e2e:auth && npm run e2e:sso",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -22,7 +22,8 @@
     "export:packets": "tsx scripts/export-packets.ts",
     "secret-scan": "tsx scripts/secret-scan.ts",
     "sbom": "npm sbom --sbom-format cyclonedx --omit dev > sbom.cdx.json",
-    "e2e:auth": "bash scripts/e2e-auth.sh"
+    "e2e:auth": "bash scripts/e2e-auth.sh",
+    "e2e:sso": "bash scripts/e2e-sso.sh"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

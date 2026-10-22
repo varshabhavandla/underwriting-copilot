@@ -49,9 +49,12 @@ describe.skipIf(!dbEnabled)("authentication state (real Postgres)", () => {
       await expect(app`select * from auth.user_state(${T["a"]!}, ${U["a-admin"]!})`).rejects.toThrow(/permission denied/);
       await expect(app`select auth.actor_role()`).rejects.toThrow(/permission denied/);
     });
-    it("even a superuser-free owner connection is subject to the owner-only policy on the tables (default deny for anyone else)", async () => {
-      const [r] = await owner<{ n: number }[]>`select count(*)::int as n from pg_policies where schemaname = 'auth' and policyname = 'owner_only'`;
-      expect(r!.n).toBe(2);
+    it("every table in the auth schema has forced row-level security with the owner-only policy (default deny for anyone else)", async () => {
+      const tables = await owner<{ relname: string; relrowsecurity: boolean; relforcerowsecurity: boolean }[]>`
+        select c.relname, c.relrowsecurity, c.relforcerowsecurity from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'auth' and c.relkind = 'r'`;
+      const policies = await owner<{ tablename: string }[]>`select tablename from pg_policies where schemaname = 'auth' and policyname = 'owner_only'`;
+      expect(tables.length).toBeGreaterThanOrEqual(3);
+      for (const t of tables) { expect(t.relrowsecurity, t.relname).toBe(true); expect(t.relforcerowsecurity, t.relname).toBe(true); expect(policies.some((p) => p.tablename === t.relname), t.relname).toBe(true); }
     });
   });
 

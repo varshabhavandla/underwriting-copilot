@@ -1,11 +1,11 @@
 import Link from "next/link";
-import { oidcConfig, services } from "@/server/services";
+import { authEnabled, services } from "@/server/services";
 
 /** Navigation, who is signed in, and sign-out. Renders nothing when sign-in is not configured or there is no session. */
 export async function SessionBar() {
   let who: { role: string } | null = null;
   try {
-    if (!oidcConfig()) return null;
+    if (!authEnabled()) return null;
     const s = await services();
     who = s?.role ? { role: s.role } : null;
   } catch {

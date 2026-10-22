@@ -175,6 +175,15 @@ s("V10.5.5", X, "OIDC back-channel logout is not implemented")
 s("V14.3.1", M, f"Logout response sends Clear-Site-Data for cache and storage ({AE})")
 s("V16.3.1", M, f"Sign-in successes are audit events (auth.login, auth.logout); failures are logged with a reason code and metrics ({AE})")
 
+# --- Per-organization sign-in added 2026-10-22 (D-030) ---
+SS = "test/unit/sso.test.ts"; SD = "test/db/sso.test.ts"; SE = "scripts/e2e-sso.mjs"
+s("V6.3.4", M, "One pathway: OpenID Connect to the organization's configured provider (or the deployment's single provider); no local passwords (docs/AUTHENTICATION.md)")
+s("V6.8.1", M, f"Identities keyed by issuer and subject; a session can be created only in the organization the sign-in started for ({SD}, {SE})")
+s("V10.2.2", M, f"With several providers, the provider is bound to the flow by the sealed cookie and a code from another organization's provider is refused ({SE})")
+s("V1.3.6", P, f"Administrator-supplied provider URLs: https only, public addresses after DNS resolution, no redirects, size and time limits ({SS}); webhook URLs check IP literals only; DNS rebinding window remains (B-153)")
+s("V13.2.4", P, f"Outbound provider calls are restricted to public https hosts ({SS}); no per-organization allowlist and no network-level egress policy yet (B-153)")
+s("V14.2.4", P, "Encryption, logging and access rules defined; provider client secrets are write-only and encrypted under the tenant key; retention not set (LEGAL_REVIEW.md)")
+
 src = sys.argv[1]
 rows = [r for r in csv.DictReader(open(src, encoding="utf-8-sig")) if r["L"] in ("1", "2")]
 out = pathlib.Path(__file__).parent

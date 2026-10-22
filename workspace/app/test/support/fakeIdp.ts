@@ -18,8 +18,10 @@ export interface Misbehavior {
   alg?: "RS256" | "HS256" | "none";
   /** Sign with a key the discovery document does not publish. */
   foreignKey?: boolean;
+  /** Key id put in the token header (for example one the provider does not publish). */
+  kid?: string;
 }
-export interface FakeIdp { issuer: string; port: number; server: Server; misbehave: Misbehavior; jwk: JWK; close(): Promise<void>; tokensIssued: number }
+export interface FakeIdp { issuer: string; port: number; server: Server; misbehave: Misbehavior; jwk: JWK; close(): Promise<void>; tokensIssued: number; jwksFetches: number; /** Publishes a new signing key and signs with it from now on. */ rotate(keepOld?: boolean): Promise<void>; /** Key id used for the next tokens. */ kid: string }
 
 const b64 = (b: Buffer) => b.toString("base64url");
 
@@ -28,8 +30,20 @@ export async function startFakeIdp(o: FakeIdpOptions): Promise<FakeIdp> {
   const { publicKey, privateKey } = await generateKeyPair("RS256", { extractable: true });
   const foreign = await generateKeyPair("RS256");
   const jwk = { ...(await exportJWK(publicKey)), kid: "fake-1", alg: "RS256", use: "sig" };
+  const published: JWK[] = [jwk];
+  let signing = privateKey;
   const codes = new Map<string, { sub: string; nonce: string; challenge: string; redirectUri: string; exp: number }>();
-  const state: FakeIdp = { issuer: "", port: 0, server: undefined as never, misbehave: {}, jwk, close: async () => {}, tokensIssued: 0 };
+  const state: FakeIdp = {
+    issuer: "", port: 0, server: undefined as never, misbehave: {}, jwk, close: async () => {}, tokensIssued: 0, jwksFetches: 0, kid: "fake-1",
+    rotate: async (keepOld = false) => {
+      const kp = await generateKeyPair("RS256", { extractable: true });
+      state.kid = `fake-${published.length + 1}`;
+      const nj = { ...(await exportJWK(kp.publicKey)), kid: state.kid, alg: "RS256", use: "sig" };
+      if (!keepOld) published.length = 0;
+      published.push(nj);
+      signing = kp.privateKey;
+    },
+  };
 
   const server = createServer(async (req, res) => {
     const u = new URL(req.url ?? "/", state.issuer || "http://127.0.0.1");
@@ -38,7 +52,7 @@ export async function startFakeIdp(o: FakeIdpOptions): Promise<FakeIdp> {
       return send(200, { issuer: state.issuer, authorization_endpoint: `${state.issuer}/authorize`, token_endpoint: `${state.issuer}/token`, jwks_uri: `${state.issuer}/jwks`,
         response_types_supported: ["code"], id_token_signing_alg_values_supported: ["RS256"], code_challenge_methods_supported: ["S256"] });
     }
-    if (u.pathname === "/jwks") return send(200, { keys: [jwk] });
+    if (u.pathname === "/jwks") { state.jwksFetches++; return send(200, { keys: published }); }
     if (u.pathname === "/authorize") {
       const q = u.searchParams;
       if (q.get("client_id") !== o.clientId || q.get("redirect_uri") !== o.redirectUri || q.get("response_type") !== "code" || q.get("code_challenge_method") !== "S256" || !q.get("code_challenge") || !q.get("state") || !q.get("nonce")) {
@@ -78,10 +92,10 @@ export async function startFakeIdp(o: FakeIdpOptions): Promise<FakeIdp> {
         // classic algorithm-confusion attempt: sign with the public key material as an HMAC secret
         jwt = await new SignJWT({ ...claims, sub: rec.sub }).setProtectedHeader({ alg: "HS256", kid: "fake-1" }).setIssuer(state.issuer).setAudience(o.clientId).setIssuedAt().setExpirationTime("5m").sign(Buffer.from(JSON.stringify(jwk)));
       } else {
-        let t = new SignJWT({ ...claims, sub: rec.sub }).setProtectedHeader({ alg: "RS256", kid: "fake-1" }).setIssuer(m.issuer ?? state.issuer).setAudience((m.claims?.["aud"] as string | string[] | undefined) ?? o.clientId)
+        let t = new SignJWT({ ...claims, sub: rec.sub }).setProtectedHeader({ alg: "RS256", kid: m.kid ?? state.kid }).setIssuer(m.issuer ?? state.issuer).setAudience((m.claims?.["aud"] as string | string[] | undefined) ?? o.clientId)
           .setIssuedAt(m.issuedAt).setExpirationTime(m.expiresIn ?? "5m");
         if (m.claims && "sub" in m.claims) t = t.setSubject(String(m.claims["sub"]));
-        jwt = await t.sign(m.foreignKey ? foreign.privateKey : privateKey);
+        jwt = await t.sign(m.foreignKey ? foreign.privateKey : signing);
       }
       state.tokensIssued++;
       return send(200, { id_token: jwt, token_type: "Bearer", access_token: "unused" });
