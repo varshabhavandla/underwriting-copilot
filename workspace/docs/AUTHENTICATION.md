@@ -19,8 +19,9 @@ Status 2026-10-22: built and tested against a local fake identity provider. No r
 ## Roles
 `viewer` reads; `processor` also takes applications and builds files; `underwriter` records decisions (the database decision gate independently requires an underwriter acting as themselves); `admin` administers users and identities and may run delivery. Every API route declares the role it needs and a policy test fails if one does not (hardening.test.ts). Pages and server actions use the same check.
 
-## Provisioning
-Identities are not created at first login. A tenant admin (or the owner role during setup) links an IdP subject to an existing user: `auth.link_identity`. One subject maps to one user; one user has one identity per issuer. Disabling a user (`auth.set_user_disabled`) revokes their sessions and blocks new ones. There is no administration screen yet (B-148).
+## Provisioning and administration
+Identities are not created at first login. Admins use the screens under `/admin/users` (admin role only): create a user with a role, link the person's provider subject identifier, change a role (effective on the very next request), disable or enable (sessions end at once), end a user's sessions, unlink an identity. `/admin/audit` lists sign-in, session and administration events from the tamper-evident ledger. Every user can open `/account` to see their own sessions (browser, times) and end any of them.
+These are database functions, not application logic: each requires an acting admin in the same tenant, audits itself (ids and counts only, never email addresses or tokens), and the application role no longer has INSERT on users. An admin cannot change their own role, disable themselves or unlink their own identity, so a tenant always keeps at least one enabled admin. One subject maps to one user; one user has one identity per issuer. The first admin of a tenant is created by whoever provisions the tenant with the owner database role (a setup step, not a screen).
 
 ## Local development
 `app/test/support/fakeIdp.ts` is a development-only provider (it refuses to run when NODE_ENV is production). `scripts/demo-up.sh` starts it so the demo signs in as Admin, Processor, Underwriter or Viewer. Without `OIDC_ISSUER`, non-production runs can still use the legacy `DEV_TENANT_ID` identity; production refuses to start without OIDC settings and refuses `DEV_*` variables.
@@ -35,6 +36,6 @@ Authorization code with PKCE and exact redirect matching; asymmetric ID token si
 - The application server is trusted to assert the acting user inside a transaction; a compromised application can act as any user. Database role separation limits what it can do (no direct access to sessions or identities) but not this.
 - A single IdP is configured per deployment (B-152).
 - Authorization codes appear in the callback URL and may be logged by the platform; they are single-use, PKCE-bound and short-lived.
-- No administration screen, no session list for users, no purge job for expired sessions (B-148, B-150).
+- No purge job for expired and revoked sessions (B-150); no bulk user import or SCIM deprovisioning; the administration screens have had no usability review.
 - `amr` semantics differ by provider; MFA enforcement through it is only as good as the provider's reporting.
 - Not independently tested.

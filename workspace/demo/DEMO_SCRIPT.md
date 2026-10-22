@@ -7,6 +7,7 @@ Say first: all data is synthetic; the model provider is a mock; the tool prepare
 | Step | Do | Point to make |
 |---|---|---|
 | 0. Sign in (1 min) | Open /review, choose Underwriter on the fake provider page | Roles come from our database, not from the login provider. The viewer role sees files but cannot decide; sessions can be revoked at once; every sign-in is audited. |
+| 0b. Admin (1 min) | In a second private window sign in as Admin; open Admin | Create a user, link a provider identity, change a role: the change applies on the user's next click. Every change appears under Security events, with ids only. An admin cannot demote or disable themselves. |
 | 1. Queue (1 min) | Open /review | Six prepared files, each with open exceptions by severity and a drafted memo. Status is needs_review for every file; software never approves. |
 | 2. A flagged file (2 min) | Open Harbor Bakery LLC | One critical exception: a document contained instruction-like text (prompt injection). The tool held those facts for a human and did not obey the text. |
 | 3. Rules with citations (1 min) | Scroll to rule results | 11 SBA rules, each with the SOP 50 10 section. Failures and unknowns go to a person; nothing passes silently. The tool lists 7 things it did not evaluate. |

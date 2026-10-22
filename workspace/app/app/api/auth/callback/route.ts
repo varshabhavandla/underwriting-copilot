@@ -39,7 +39,7 @@ export const GET = withRequest("auth_callback", { limit: { max: 20, windowMs: 60
     const env = serverEnv();
     const { sql } = infra();
     const { token, hash } = newSessionToken();
-    const id = await loginIdentity(sql, who.issuer, who.subject, hash, env.SESSION_ABSOLUTE_HOURS * 3600);
+    const id = await loginIdentity(sql, who.issuer, who.subject, hash, env.SESSION_ABSOLUTE_HOURS * 3600, req.headers.get("user-agent"));
     if (!id) return fail("unknown_or_disabled_identity");
     await withTenant(sql, { tenantId: id.tenantId, userId: id.userId }, (tx) =>
       appendAudit(tx, id.tenantId, { actorKind: "user", actorId: id.userId, action: "auth.login", subject: { amr: who.amr }, result: "ok" }));

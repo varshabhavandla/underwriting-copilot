@@ -74,6 +74,73 @@ try {
   eq("admin lands on the review queue", new URL(adm.page.url()).pathname, "/review");
   eq("admin cannot record a decision (only underwriters)", (await call(adm.page, 'POST', `/api/cases/${caseId}/decision`, { decision: "decline", reasons: ["x"], overrides: [] })).status(), 403);
 
+  // administration screens
+  for (const [who, label] of [[uw, "underwriter"], [view, "viewer"], [proc, "processor"]]) {
+    await who.page.goto(`${base}/admin/users`);
+    eq(`${label} is refused the user administration screen`, new URL(who.page.url()).pathname, "/forbidden");
+    await who.page.goto(`${base}/admin/audit`);
+    eq(`${label} is refused the security events screen`, new URL(who.page.url()).pathname, "/forbidden");
+  }
+  await adm.page.goto(`${base}/admin/users`);
+  check("admin sees the user list including themselves", (await adm.page.innerText("body")).includes("admin@eval.example (you)"));
+  check("an admin has no role or disable controls on their own row", (await adm.page.locator("tr:has-text('admin@eval.example (you)') select, tr:has-text('admin@eval.example (you)') button").count()) === 0);
+  await adm.page.fill("input[name=email]", "Newbie@Eval.example");
+  await adm.page.selectOption("form:has(button:has-text('Create user')) select[name=role]", "processor");
+  await adm.page.click("button:has-text('Create user')");
+  await adm.page.waitForLoadState("networkidle");
+  check("admin creates a user", (await adm.page.innerText("body")).includes("User created") && (await adm.page.innerText("body")).includes("newbie@eval.example"));
+  await adm.page.fill("input[name=email]", "newbie@eval.example");
+  await adm.page.click("button:has-text('Create user')");
+  await adm.page.waitForLoadState("networkidle");
+  check("a duplicate address is refused with a message", (await adm.page.innerText("body")).includes("already in use"));
+  const row = () => adm.page.locator("tr:has-text('newbie@eval.example')");
+  const nb0 = await browser.newContext(); const nbp0 = await nb0.newPage();
+  await nbp0.goto(`${base}/review`); await nbp0.click("a:has-text('Newbie')"); await nbp0.waitForLoadState("networkidle");
+  eq("a user who is not linked yet cannot sign in", new URL(nbp0.url()).pathname, "/forbidden");
+  await row().locator("input[name=subject]").fill("sub-newbie");
+  await row().locator("button:has-text('Link')").click();
+  await adm.page.waitForLoadState("networkidle");
+  check("admin links the person's provider identity", (await adm.page.innerText("body")).includes("Identity linked"));
+  const nb = await signIn("sub-newbie", "Newbie");
+  eq("the new user signs in and lands on the queue", new URL(nb.page.url()).pathname, "/review");
+  check("and sees the processor navigation without Admin", !(await nb.page.innerText("body")).includes("Admin") && (await nb.page.innerText("body")).includes("(processor)"));
+  const ok1 = await call(nb.page, "POST", "/api/applications", app);
+  check("as a processor the new user can submit an application", ok1.status() === 201 || ok1.status() === 200, String(ok1.status()));
+  await row().locator("select").selectOption("viewer");
+  await row().locator("button:has-text('Set')").click();
+  await adm.page.waitForLoadState("networkidle");
+  check("admin changes the role", (await adm.page.innerText("body")).includes("Role changed"));
+  eq("the role change applies on the very next request, without signing in again", (await call(nb.page, "POST", "/api/applications", app)).status(), 403);
+  await row().locator("button:has-text('Disable')").click();
+  await adm.page.waitForLoadState("networkidle");
+  check("admin disables the user", (await adm.page.innerText("body")).includes("User disabled"));
+  await nb.page.goto(`${base}/review`);
+  check("the disabled user's session is dead at once", nb.page.url().startsWith(idp));
+  await row().locator("button:has-text('Enable')").click();
+  await adm.page.waitForLoadState("networkidle");
+  await row().locator("button:has-text('Unlink identity')").click();
+  await adm.page.waitForLoadState("networkidle");
+  check("admin unlinks the identity", (await adm.page.innerText("body")).includes("Identity unlinked"));
+  // my sessions: end another browser's session
+  const proc2 = await signIn("sub-processor", "Processor");
+  await proc.page.goto(`${base}/account`);
+  check("a user sees both of their sessions and which is current", (await proc.page.locator("tbody tr").count()) >= 2 && (await proc.page.innerText("body")).includes("(this session)"));
+  await proc.page.locator("tr:not(:has-text('(this session)')) button:has-text('End')").first().click();
+  await proc.page.waitForLoadState("networkidle");
+  check("a user can end another of their own sessions", (await proc.page.innerText("body")).includes("Session ended"));
+  await proc2.page.goto(`${base}/review`);
+  check("and that browser is signed out", proc2.page.url().startsWith(idp));
+  eq("the current session keeps working", (await call(proc.page, "GET", "/api/health")).status(), 200);
+  // security events
+  await adm.page.goto(`${base}/admin/audit`);
+  const evt = await adm.page.innerText("body");
+  check("the security events screen shows administration and sign-in events", ["admin.user_created", "admin.identity_linked", "admin.role_changed", "admin.user_disabled", "admin.identity_unlinked", "auth.login", "auth.session_revoked"].every((a) => evt.includes(a)), evt.slice(0, 200));
+  const details = (await adm.page.locator("tbody code").allInnerTexts()).join("\n");
+  check("the event details hold ids and counts only: no email address, provider identifier or token", details.length > 20 && !details.includes("sub-newbie") && !/@/.test(details), details.slice(0, 120));
+  // the home page is protected too
+  const home = await fetch(`${base}/`, { redirect: "manual" });
+  check("the home page sends anonymous visitors to sign-in", home.status >= 300 && home.status < 400 && (home.headers.get("location") ?? "").includes("/api/auth/login"));
+
   // sessions in the database
   const tok = (await cookieOf(proc.ctx)).value;
   const rows = await owner`select token_hash from auth.sessions where tenant_id = ${tenant}`;

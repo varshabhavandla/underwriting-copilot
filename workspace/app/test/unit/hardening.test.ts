@@ -153,3 +153,18 @@ describe("route policy (authentication)", () => {
   });
   it("control: the exceptions are real routes", () => { for (const k of OTHER.keys()) expect(routes2.some((r) => r.includes(`/api/${k}/route.ts`)), k).toBe(true); });
 });
+
+describe("page policy (authentication)", () => {
+  const walkP = (d: string): string[] => readdirSync(d).flatMap((f) => { const p = join(d, f); return statSync(p).isDirectory() ? (p.endsWith("/api") ? [] : walkP(p)) : p.endsWith("page.tsx") ? [p] : []; });
+  const pages = walkP(join(import.meta.dirname, "..", "..", "app"));
+  const PUBLIC = new Map([["forbidden", "tells the visitor they have no access; contains no data"]]);
+  it("finds the pages", () => expect(pages.length).toBeGreaterThanOrEqual(6));
+  it.each(pages.map((p) => [p.split("/app/app/")[1]!.replace(/\/?page\.tsx$/, "") || "(home)", p]))("page %s requires a session or is a documented public page", (name, path) => {
+    if (PUBLIC.has(name!)) return;
+    expect(readFileSync(path, "utf8"), `${name} must call requireSession`).toMatch(/requireSession\(/);
+  });
+  it("administration pages require the admin role", () => {
+    for (const p of pages.filter((x) => x.includes("/admin/"))) expect(readFileSync(p, "utf8")).toMatch(/requireSession\("admin"/);
+  });
+  it("control: the public page list names a real page", () => { for (const k of PUBLIC.keys()) expect(pages.some((p) => p.includes(`/app/${k}/page.tsx`)), k).toBe(true); });
+});

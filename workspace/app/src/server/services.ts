@@ -80,3 +80,8 @@ export async function services(): Promise<Services | null> {
 export function workerServices(tenantId: string): Services {
   return { ...infra(), tenantId, userId: undefined, role: undefined, sessionId: undefined };
 }
+
+/** The caller's own session token (for flagging "this session" and keeping it when ending the others). */
+export async function currentSessionToken(): Promise<string | null> {
+  return cookieValue((await headers()).get("cookie"), SESSION_COOKIE);
+}

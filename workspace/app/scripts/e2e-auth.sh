@@ -18,7 +18,7 @@ HOSTPORT=$(echo "$UW_TEST_ADMIN_URL" | sed -E 's#^[a-z]+://([^@]*@)?([^/]+)/.*#\
 SETUP=$(SETUP_ISSUER=$ISS npx tsx scripts/setup-db.ts uw_e2e_auth 2>&1) || { echo "FAIL database setup: $SETUP"; exit 1; }
 T=$(echo "$SETUP" | sed -n 's/^TENANT=//p')
 mkdir -p "$WORK/uploads"
-setsid npx tsx scripts/fake-idp.ts "$IDP_PORT" "$CLIENT" "$SECRET" "http://127.0.0.1:$WEB_PORT/api/auth/callback" sub-admin:Admin sub-processor:Processor sub-underwriter:Underwriter sub-viewer:Viewer sub-stranger:Stranger > "$WORK/idp.log" 2>&1 & IDP=$!
+setsid npx tsx scripts/fake-idp.ts "$IDP_PORT" "$CLIENT" "$SECRET" "http://127.0.0.1:$WEB_PORT/api/auth/callback" sub-admin:Admin sub-processor:Processor sub-underwriter:Underwriter sub-viewer:Viewer sub-stranger:Stranger sub-newbie:Newbie > "$WORK/idp.log" 2>&1 & IDP=$!
 for _ in $(seq 1 30); do curl -s -o /dev/null "$ISS/.well-known/openid-configuration" && break; sleep 1; done
 # note: no DEV_TENANT_ID. With OIDC configured only a session counts.
 export DATABASE_URL="postgres://uw_app:uw_app_dev@$HOSTPORT/uw_e2e_auth" UPLOAD_DIR="$WORK/uploads" FIELD_KEY_MASTER=$(openssl rand -base64 32) \

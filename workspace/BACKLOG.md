@@ -123,7 +123,7 @@ Loop 11 (lender CISO / examiner view), objections and disposition:
 - B-145 P2 todo  Read and map NIST AI 600-1 (Generative AI Profile); close the AI RMF gaps listed in NIST_AI_RMF_MAPPING.md.
 - B-146 P1 todo  Upload hardening: malware scanning, extension-versus-content check, serve-as-attachment rule for the viewer (ASVS V5.2.2, V5.4.3).
 - B-147 P1 todo  Log shipping and alerting to a separate system; authentication event logging once B-117 lands (ASVS V16.3.1, V16.4.3).
-- B-148 P1 todo  Administration screens: users, identity linking, role changes, active sessions with revoke, and a "my sessions" view (ASVS V7.4.5, V7.5.2).
+- B-148 P1 done (admin screens, session screens, security events; loop 19)  Administration screens: users, identity linking, role changes, active sessions with revoke, and a "my sessions" view (ASVS V7.4.5, V7.5.2).
 - B-150 P2 todo  Purge job for expired and revoked sessions.
 - B-151 P2 todo  Check acr and auth_time when the chosen provider supports them (ASVS V6.8.4); consider a CSRF token for state-changing routes (V3.5.1).
 - B-152 P1 todo  Per-tenant identity providers (each lender's own SSO): issuer and client settings per tenant; the identity table already keys on issuer and subject.

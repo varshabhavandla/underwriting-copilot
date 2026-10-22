@@ -29,9 +29,9 @@ export function setCookie(name: string, value: string, maxAgeSeconds: number): s
 }
 export const clearCookie = (name: string) => `${name}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`;
 
-export async function loginIdentity(sql: Sql, issuer: string, subject: string, tokenHash: Buffer, absoluteSeconds: number): Promise<SessionIdentity | null> {
+export async function loginIdentity(sql: Sql, issuer: string, subject: string, tokenHash: Buffer, absoluteSeconds: number, userAgent: string | null = null): Promise<SessionIdentity | null> {
   const rows = await sql<{ session_id: string; tenant_id: string; user_id: string; role: Role }[]>`
-    select * from auth.login(${issuer}, ${subject}, ${tokenHash}, make_interval(secs => ${absoluteSeconds}))`;
+    select * from auth.login(${issuer}, ${subject}, ${tokenHash}, make_interval(secs => ${absoluteSeconds}), ${userAgent})`;
   const r = rows[0];
   return r ? { sessionId: r.session_id, tenantId: r.tenant_id, userId: r.user_id, role: r.role } : null;
 }

@@ -38,6 +38,7 @@ Browser/applicant -> Next routes -> Postgres (RLS) | Next routes -> LlmGateway -
 | S6 | Stolen or replayed session cookie | 256-bit token, only its hash stored, Secure HttpOnly SameSite=Lax __Host- cookie, idle and absolute timeouts, immediate server-side revocation on logout, user disable and admin revoke | enforced (theft of a live cookie from a compromised browser is not prevented) | test/db/auth.test.ts, e2e-auth.mjs |
 | E5 | Role escalation: a viewer or processor records a decision, an unprovisioned identity gets in | Role per route checked by a policy test, decision gate in the database, identities only via admin-linked pre-provisioning, claims never grant roles | enforced | hardening.test.ts, auth.test.ts, e2e-auth.mjs |
 | E6 | Application role reads or forges sessions and identities | Auth tables unreadable by the application role; only SECURITY DEFINER functions, internal helpers not granted | enforced | test/db/auth.test.ts |
+| E7 | A compromised application creates users or raises a role outside the admin checks | Application role has no INSERT on users; user, role and identity changes go through admin-only functions that require an acting admin in the tenant and audit themselves; an admin cannot demote or disable themselves | partial (a compromised app can still assert an admin as the acting user, see residual risks) | test/db/admin.test.ts |
 | R3 | Sign-ins and sign-outs not attributable | Audit events in the tenant ledger for success; reason-coded logs for failures | enforced | e2e-auth.mjs |
 
 ## Residual risks (not mitigated)
