@@ -47,3 +47,8 @@ Use the class labels above. Never say "reduces decision time by X percent" for r
 - Provider that invents a value: 81.8 percent recall (the invented field is rejected), 0 false accepts. Some specific defects are missed because the field needed to check them was rejected, but every defective packet still raises an exception (a human would look).
 - Provider that obeys injected instructions: 0 false accepts; fabricated and out-of-schema fields never become facts.
 These numbers show the verification and validator layers work as designed. They say nothing about how a real model will perform; the same harness must be run against a real provider (B-124) before any accuracy statement.
+
+## Status after loop 11
+Built: the 12-class synthetic test set generator, the pipeline evaluation (`npm run eval:pipeline`, report in `workspace/reports/EVALUATION_REPORT.md`), provider failure-mode runs, and an ESTIMATED action-count time model with explicit assumptions and sensitivity ranges.
+Not done: a timed manual baseline and instrumented console timings. Tooling exists for both: `npm run export:packets -- <dir> 10` writes the packets and a timing worksheet; fill `seconds` for each packet and flow; `npm run timing -- <file.csv>` reports medians, ratio of medians and a seeded bootstrap interval, and marks classes with fewer than 5 timings per flow as insufficient. Until that data exists, no time-savings statement may be made. The estimated ratios in the report depend on guessed durations and their range includes values above 1.00.
+Classes not covered: collateral shortfall (collateral is not collected).

@@ -2,6 +2,7 @@ import { withTenant } from "@/db/client";
 import { addDocument, appendAudit } from "@/db/repo";
 import { DOC_TYPES, type DocType } from "@/extraction/schemas";
 import { ingestDocument } from "@/ingest/ingest";
+import { flagUnreadable } from "@/ingest/unreadable";
 import { objectKey, sha256Hex } from "@/storage/objectStore";
 import { UploadRejected, validateUpload } from "@/storage/validateUpload";
 import { services } from "@/server/services";
@@ -48,7 +49,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ caseId: string
     });
   }
   if (kind !== "text") {
-    await withTenant(s.sql, tctx, (tx) => tx`insert into exceptions (tenant_id, case_id, document_id, kind, severity, detail) values (${s.tenantId}, ${caseId}, ${documentId}, 'ocr_required', 'medium', ${"no text layer reader is configured for " + kind + " files; needs manual review"}) on conflict do nothing`);
+    await withTenant(s.sql, tctx, async (tx) => {
+      const dup = await tx`select 1 from exceptions where document_id = ${documentId} and kind = 'ocr_required'`;
+      if (dup.length === 0) await flagUnreadable(tx, s.tenantId, caseId, documentId!, kind);
+    });
     return Response.json({ documentId, ingested: false, reason: "ocr_required" }, { status: 202 });
   }
   const pages = bytes.toString("utf8").split("\f");

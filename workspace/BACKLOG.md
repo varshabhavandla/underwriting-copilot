@@ -26,7 +26,7 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-307 P1 done  Mock servicing adapter behind an interface, DB outbox guarded by RLS, leased delivery with backoff, signed webhooks with SSRF checks, worker route, docs/SERVICING_ADAPTER.md; 160 tests, 7 mutation checks.
 - B-308 P0 todo  Evaluation harness + measured time-to-decision vs simulated baseline.
 - B-309 P1 todo  Observability, hardening, threat model review.
-- B-310 P2 todo  Synthetic data generator (tax returns, statements, financials, applications).
+- B-310 P2 done  Synthetic generator: seeded packets with ground truth, 12 file classes (docs/MEASUREMENT_PLAN.md).
 - B-117 P1 todo  Decide D-011 authentication provider against criteria (SSO, organizations, audit log, residency); verify price and security pages.
 - B-118 P1 todo  Verify D-013/D-014/D-015: per-tenant key support, Postgres options with forced RLS and PITR, LLM provider data terms and SOC reports; produce a cost model from vendor price pages.
 - B-119 P2 todo  CI check that every diagrams/*.mmd parses and docs embed the current copy.
@@ -41,6 +41,8 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-128 P1 todo  Extend ingestion and rules to documents the pack lists as not evaluated (owner PFS, credit reports, tax transcripts, collateral, debt schedule).
 - B-129 P1 todo  Console gaps: underwriter confirmation of individual facts (G-A), memo editing before adoption, source-document viewer next to each citation, accessibility review, pagination.
 - B-130 P1 todo  Per-tenant webhook subscriptions and secret rotation, dead-letter review and replay screen, egress allowlist for delivery, signature verification SDK snippet tests in another language.
+- B-131 P0 todo  Timed manual baseline (two operators) and instrumented console timings; run `npm run timing`; needs a person. Add a review-opened event to the console to time assisted reviews.
+- B-132 P2 todo  Add classes for collateral shortfall and low-quality scans once collateral data and OCR exist; larger N for tighter intervals.
 ## Workflow adoption (own design; skills from broomva/skills, MIT)
 - B-401 P1 todo  Root router + scoped instruction files per package; AGENTS.md as the canonical file with CLAUDE.md pointing to it; skills in one canonical dir.
 - B-402 P0 todo  Database-enforced invariants: forced row-level security on every table, no role with BYPASSRLS, append-only hash-chained audit/ledger, provenance required for every fact, one shared write path. Tests that fail if any is weakened.
@@ -101,3 +103,8 @@ Loop 10 (lender CISO / examiner view), objections and disposition:
 - C-1001 P1: At-least-once delivery means a real servicing system could see duplicates if it ignores the idempotency key. Action: contract requirement in the adapter doc; the adapter must pass the key through.
 - C-1002 P1: The delivery worker runs as the application role for a tenant context; a multi-tenant worker needs a safe way to iterate tenants without a bypass role. Action: B-130; iterate a tenant list from the control plane and run one tenant context at a time.
 - C-1003 P2: Event payloads contain the borrower legal name in the boarding package, which goes to a third party. Action: expected for boarding; covered by the lender contract and the subprocessor list; the webhook path carries ids only.
+
+Loop 11 (lender CISO / examiner view), objections and disposition:
+- C-1101 P0: A reader may quote the estimated ratios as a result. Action: labeled ESTIMATED in the report, a "do not quote" line, a test that the report never states a savings percentage, and D-024.
+- C-1102 P1: The mock reads the same label templates the generator prints, so accuracy figures are inflated. Action: stated in the report header; real-provider runs (B-124) on the same harness before any accuracy statement.
+- C-1103 P1: Baseline operator knows the system, biasing the baseline fast. Action: disclosed in the protocol; second operator in B-131.

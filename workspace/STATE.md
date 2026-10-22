@@ -14,6 +14,7 @@ Do you accept the default stack in DECISIONS.md D-002/D-003 (Python 3.12 + FastA
 - Existing foundation (stdlib Python: reconcile, versioned checklist, tenancy/idempotency store, synthetic fixtures, 12 tests + 6 fixture cases) moved to app/; verify still passes.
 - Domain decided: commercial lending (SME and SBA). Supersedes the open item in docs/decisions/0002.
 
+- Loop 11: evaluation harness (12 classes, measured behavior, provider failure modes, estimated time model with explicit assumptions), timing analysis and packet export tooling, committed report; 179 tests; mutation checks caught.
 - Loop 10: mock servicing adapter, outbox with RLS-enforced decision dependency, leased delivery with backoff, signed webhooks, SSRF checks, worker route; 160 tests; 7 mutation checks caught; web e2e follows an approved case to handed_off.
 - Loop 9: underwriter review console (list, case page, exception disposition, memo adoption, decision form and API); database guards for override-on-approval and final decisions; 137 tests, mutation checks (two guards needed separate tests); web e2e extended.
 - Loop 8: rule pack (11 SOP-cited rules, generated docs), file builder with verified cited memo, case build API, full-pipeline demo; 125 tests; 5 mutation checks caught; found and fixed a case-collision bug in submitApplication.
@@ -25,8 +26,8 @@ Do you accept the default stack in DECISIONS.md D-002/D-003 (Python 3.12 + FastA
 - Loop 2.5: ported core to TypeScript (14 tests, 6 fixture cases pass); installed broomva/skills (MIT) under .agents/skills with attribution.
 - Loop 2: SBA process map from SOP 50 10 8.1 primary text (docs/SBA_PROCESS_MAP.md); sources S-1..S-6.
 
-## Next (loop 11)
-Phase 3 step 8: evaluation harness: build the synthetic test set at the planned size per file class, run the pipeline (mock provider; real provider only with approval), compute extraction accuracy and exception detection, and measure time-to-decision against the simulated manual baseline per docs/MEASUREMENT_PLAN.md, reporting measured vs simulated vs estimated. Then step 9: observability, hardening pass, threat model review, and the Phase 1-3 exit documents.
+## Next (loop 12)
+Phase 3 step 9: observability (structured logs without PII, request ids, metrics), security hardening pass (rate limiting, headers, secret scanning, dependency audit, SBOM, CI policy checks from DEVSECOPS.md), and a threat model review (STRIDE-style over the real components). Then re-check unblocked backlog items (B-111 rule spot-check against the published SOP, B-113 and B-118 vendor research) and write the exit documents.
 
 ## Blockers
 None. No paid resources, no outside contact, no real data.

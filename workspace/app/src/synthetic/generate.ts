@@ -1,7 +1,7 @@
 import { SCHEMAS, type DocType } from "../extraction/schemas";
 
 /** Seeded, deterministic synthetic business documents with ground truth. Every name, number and identifier is fake. */
-export type Variant = "clean" | "bank_arith_error" | "balance_imbalance" | "stale_statement" | "income_mismatch" | "injection" | "pii_heavy";
+export type Variant = "clean" | "bank_arith_error" | "balance_imbalance" | "stale_statement" | "income_mismatch" | "injection" | "pii_heavy" | "missing_document";
 
 export interface SynthDoc { id: string; type: DocType; pages: string[] }
 export interface Truth { docId: string; field: string; value: string }
@@ -101,5 +101,11 @@ export function makePacket(seed: number, variant: Variant, asOf = new Date("2026
   }
   docs.push({ id: "d_fs", type: "financial_statement", pages });
 
+  if (variant === "missing_document") {
+    const drop = docs.findIndex((d) => d.id === "d_bank2");
+    docs.splice(drop, 1);
+    for (let i = truth.length - 1; i >= 0; i--) if (truth[i]!.docId === "d_bank2") truth.splice(i, 1);
+    planted.push("rule:required-documents");
+  }
   return { seed, variant, caseRef: `SYN-${seed}-${variant}`, legalName, docs, truth, planted };
 }

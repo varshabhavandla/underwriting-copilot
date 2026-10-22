@@ -64,3 +64,6 @@ Approving a case that still has open critical or high exceptions requires at lea
 
 ## D-023 Outbox and delivery (2026-10-22)
 Events go through a database outbox created by a trigger on decisions and guarded by row-level security (no event without a matching human decision). Delivery is at least once with leases, exponential backoff and a cap; consumers dedupe on the event id or idempotency key. Webhooks are HMAC-SHA256 signed with a timestamp (300-second window) and refuse non-public targets. Free-text reasons and the full EIN are never sent. Details: docs/SERVICING_ADAPTER.md.
+
+## D-024 How time-to-decision is reported (2026-10-22)
+The evaluation reports three labeled things: measured pipeline behavior on synthetic data, an ESTIMATED time model built from stated assumptions, and (when someone supplies it) timed human data analyzed by `npm run timing`. The estimated model is never quoted as a result, includes the underwriter's verification burden, and shows a range that can exceed 1.00. The "up to 80 percent" claim in the reference pitch stays an unverified vendor claim.
