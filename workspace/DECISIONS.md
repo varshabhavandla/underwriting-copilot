@@ -73,3 +73,6 @@ Every API route goes through one wrapper (request id, per-client rate limit, con
 
 ## D-026 Hosting and data-store options for the pilot (2026-10-22)
 Vercel Functions fit the workload (docs/VENDOR_FIT.md); uploads must go direct to storage above 4.5 MB, a connection pooler is required, and Pro or Enterprise is required for commercial use. Managed Postgres (Neon is the candidate priced) is an option, not a decision: role and forced-RLS compatibility and attestation scope are unverified. No purchase or account creation without builder approval.
+
+## D-027 Browser-level checks belong in the demo path (2026-10-22)
+The curl-based e2e could not see that the no-referrer header broke browser form posts. The fix is Referrer-Policy same-origin plus a config test. Backlog B-137: add a headless-browser check of decide/dispose/adopt/apply to verify.sh.

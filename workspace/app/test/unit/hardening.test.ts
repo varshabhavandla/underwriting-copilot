@@ -105,10 +105,10 @@ describe("metrics", () => {
 describe("secret scan", () => {
   it("finds common secrets and credential URLs, and honors the allow marker and dev passwords", () => {
     const planted = [
-      "const k = 'AKIAABCDEFGHIJKLMNOP';",
-      "-----BEGIN RSA PRIVATE KEY-----",
-      "token: ghp_abcdefghijklmnopqrstuvwxyz0123456789",
-      "DATABASE_URL=postgres://admin:s3cretPassw0rd@db.example.com/app",
+      "const k = 'AKIA" + "ABCDEFGHIJKLMNOP';",
+      "-----BEGIN RSA " + "PRIVATE KEY-----",
+      "token: ghp_" + "abcdefghijklmnopqrstuvwxyz0123456789",
+      "DATABASE_URL=postgres://admin:" + "s3cretPassw0rd@db.example.com/app",
       "api_key = \"abcdefghijklmnopqrstuvwxyz123456\"",
     ].join("\n");
     expect(scanText("f.ts", planted).map((f) => f.rule).sort()).toEqual(["assigned-secret", "aws-access-key", "github-token", "private-key", "url-credentials"]);
@@ -126,5 +126,16 @@ describe("route policy (every API route is wrapped)", () => {
     expect(src).toMatch(/limit: \{ max: [\d_]+, windowMs: [\d_]+ \}/);
     expect(src).not.toMatch(/export (async )?function (GET|POST|PUT|PATCH|DELETE)/);
     expect(src).not.toMatch(/\bconsole\.(log|error|warn|info|debug)\(/);
+  });
+});
+
+describe("security headers", () => {
+  const cfg = readFileSync(join(import.meta.dirname, "..", "..", "next.config.ts"), "utf8");
+  it("keeps same-origin referrers so browser form posts carry a real Origin (no-referrer breaks server actions)", () => {
+    expect(cfg).toMatch(/Referrer-Policy", value: "same-origin"/);
+    expect(cfg).not.toMatch(/value: "no-referrer"/);
+  });
+  it("sets the baseline headers", () => {
+    for (const h of ["X-Content-Type-Options", "X-Frame-Options", "Strict-Transport-Security", "Cross-Origin-Opener-Policy", "Content-Security-Policy"]) expect(cfg).toContain(h);
   });
 });

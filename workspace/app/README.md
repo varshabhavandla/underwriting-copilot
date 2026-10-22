@@ -20,3 +20,5 @@ Review console (dev tenant and user from `DEV_TENANT_ID`, `DEV_USER_ID`): `/revi
 Servicing: mock adapter and signed webhooks, see `workspace/docs/SERVICING_ADAPTER.md`; worker trigger `POST /api/outbox/deliver` (needs `WORKER_SECRET`).
 
 Evaluation: `npm run eval:pipeline` (EVAL_N per class, default 10) writes `workspace/reports/EVALUATION_REPORT.md`; `npm run export:packets -- <dir>` and `npm run timing -- <csv>` support the timed manual baseline (docs/MEASUREMENT_PLAN.md).
+
+Demo: `UW_TEST_ADMIN_URL=... bash scripts/demo-up.sh` rebuilds the synthetic database and serves http://127.0.0.1:3000 (uses `next dev`; stop it before `verify.sh`, since both use the same `.next` directory). Walkthrough and presentation material: `workspace/demo/` (DEMO_SCRIPT.md, CEO_PLAN.md, deck.html built by `python3 build_deck.py`).
