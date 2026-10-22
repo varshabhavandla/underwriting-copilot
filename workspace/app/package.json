@@ -24,6 +24,7 @@
     "sbom": "npm sbom --sbom-format cyclonedx --omit dev > sbom.cdx.json",
     "e2e:auth": "bash scripts/e2e-auth.sh",
     "e2e:sso": "bash scripts/e2e-sso.sh",
+    "walkthrough": "bash scripts/walkthrough.sh",
     "db:check": "tsx scripts/check-database.ts",
     "e2e:pgstore": "E2E_OBJECT_STORE=postgres bash scripts/e2e-web.sh",
     "db:migrate": "tsx scripts/migrate-hosted.ts"

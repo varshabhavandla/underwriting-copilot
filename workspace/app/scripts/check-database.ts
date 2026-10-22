@@ -5,7 +5,7 @@
  *   - every table has row-level security enabled and forced
  *   - transaction-local tenant settings (set_config(..., true)) stay inside their transaction through the connection you give it, including a pooler
  *   - with no tenant set, or a tenant that does not exist, the tenants table shows nothing
- * Usage: APP_DATABASE_URL=postgres://uw_app:...@host/db [OWNER_DATABASE_URL=postgres://uw_owner:...@host/db] npx tsx scripts/check-database.ts
+ * Usage: APP_DATABASE_URL=postgres://uw_app:...@host/db [OWNER_DATABASE_URL=postgres://uw_owner:...@host/db] npx tsx scripts/check-database.ts (secret-scan:allow)
  * Run it against the pooled URL and the direct URL separately. Exit code 1 on any failure.
  */
 import { randomUUID } from "node:crypto";

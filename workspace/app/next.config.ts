@@ -13,6 +13,8 @@ const common = [
 
 const config: NextConfig = {
   poweredByHeader: false,
+  // the console's upload form posts files through a server action; the default 1 MB limit is below our 4 MB upload cap
+  experimental: { serverActions: { bodySizeLimit: "4.5mb" } },
   async headers() {
     return [
       // API responses are data only: nothing may be loaded or framed from them

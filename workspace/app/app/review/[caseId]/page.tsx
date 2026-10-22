@@ -3,6 +3,8 @@ import { notFound, redirect } from "next/navigation";
 import { withTenant } from "@/db/client";
 import { adoptMemo, ActionDenied, decideCase, disposeException, type DecisionKind } from "@/review/actions";
 import { caseDetail, describeCite } from "@/review/queries";
+import { buildFile } from "@/file/buildFile";
+import { receiveDocument } from "@/ingest/receive";
 import { requireSession } from "@/server/guard";
 import { can, type Action } from "@/auth/roles";
 
@@ -41,6 +43,30 @@ async function dispose(form: FormData): Promise<void> {
     throw e;
   }
 }
+async function uploadDocuments(form: FormData): Promise<void> {
+  "use server";
+  const caseId = String(form.get("caseId"));
+  const { s } = await ctxOf("intake", caseId);
+  const docType = String(form.get("docType") ?? "");
+  const files = form.getAll("file").filter((f): f is File => f instanceof File && f.size > 0);
+  if (!UUID.test(caseId) || files.length === 0) return back(caseId, "choose at least one file");
+  const lines: string[] = [];
+  for (const f of files) {
+    const r = await receiveDocument(s, caseId, { name: f.name, bytes: Buffer.from(await f.arrayBuffer()) }, docType);
+    const b = r.body as { error?: string; factsProposed?: number; factsAccepted?: number; reason?: string; ingested?: boolean };
+    lines.push(`${f.name.slice(0, 60)}: ${r.status >= 400 ? `refused (${b.error})` : b.reason === "ocr_required" ? "stored; needs manual reading (no OCR yet)" : b.ingested === false ? "already uploaded" : `${b.factsAccepted ?? 0} facts accepted, ${(b.factsProposed ?? 0) - (b.factsAccepted ?? 0)} held for review`}`);
+  }
+  return back(caseId, lines.join("; "));
+}
+async function build(form: FormData): Promise<void> {
+  "use server";
+  const caseId = String(form.get("caseId"));
+  const { s, ctx } = await ctxOf("build", caseId);
+  if (!UUID.test(caseId)) return back(caseId, "invalid request");
+  const r = await buildFile(s.sql, s.gateway, ctx, caseId, new Date());
+  const n = (o: string) => r.results.filter((x) => x.outcome === o).length;
+  return back(caseId, `File built: ${n("pass")} rules passed, ${n("needs_review")} need review, ${n("fail")} failed; memo ${r.memoStored ? "drafted and verified" : "not stored (" + r.memoProblems.length + " problems)"}; ${r.exceptionsRaised.length} exceptions raised. Nothing is approved: an underwriter decides.`);
+}
 async function adopt(form: FormData): Promise<void> {
   "use server";
   const { s, ctx } = await ctxOf("decide", String(form.get("caseId")));
@@ -74,6 +100,23 @@ export default async function CaseReview({ params, searchParams }: { params: Pro
         <section><h2>Request</h2>
           <p>{usd(a.loan_amount_cents)} over {a.requested_term_months ?? "?"} months for {a.purposes.join(", ").replace(/_/g, " ")}. {a.entity_type}, NAICS {a.naics}, {a.years_in_business} years in business. EIN ending {a.ein_last4}.</p>
           <p>Owners: {a.owners.map((o) => `${o.name} ${o.percent}%`).join(", ")}</p>
+        </section>
+      )}
+
+      {!decided && can(s.role, "intake") && (
+        <section><h2>Documents</h2>
+          <p>{d.documents.length === 0 ? "No documents yet." : `Received: ${d.documents.map((x) => x.doc_type.replace(/_/g, " ")).join(", ")}.`} Accepted: PDF, PNG, JPEG, or plain text (.txt, .csv), up to 4 MB each. Text is read now; PDFs and images are stored and need manual reading until OCR exists.</p>
+          <form action={uploadDocuments} style={{ display: "grid", gap: 8, maxWidth: 560 }}>
+            <input type="hidden" name="caseId" value={caseId} />
+            <label>Document type <select name="docType" defaultValue="bank_statement"><option value="tax_return">Tax return</option><option value="bank_statement">Bank statement</option><option value="financial_statement">Financial statement</option></select></label>
+            <label>Files <input type="file" name="file" multiple required /></label>
+            <button type="submit">Upload</button>
+          </form>
+          {can(s.role, "build") && (
+            <form action={build} style={{ marginTop: 12 }}>
+              <input type="hidden" name="caseId" value={caseId} />
+              <button type="submit">{d.rules.length ? "Rebuild the file (rules and memo)" : "Build the file (run rules, draft the memo)"}</button>
+            </form>)}
         </section>
       )}
 

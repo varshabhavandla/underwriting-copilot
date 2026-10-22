@@ -112,7 +112,7 @@ Loop 11 (lender CISO / examiner view), objections and disposition:
 - B-134 P2 todo  Replace the pattern secret scan with gitleaks in CI; add SAST and build provenance.
 - B-135 P2 todo  Rule pack: model the special purpose property 25-year maturity exemption and the 51 percent real estate blended-maturity option precisely (currently conservative: needs_review); 504 chapters not encoded (MVP scope is 7(a)).
 - B-136 P1 todo  Remainder of B-113/B-118/B-121 after the 2026-10-22 pass (see end of docs/VENDOR_FIT.md): Trust Center reports, Anthropic retention policy page, managed-Postgres role/RLS test, KMS options, AICPA criteria, CFPB list page, primary OCC/FDIC bulletins. Account-dependent items need builder approval.
-- B-137 P1 todo  Headless-browser e2e (Playwright) for the review console and apply form in verify.sh and CI.
+- B-137 P1 partial  Browser walkthrough exists (npm run walkthrough, 40 steps, D-034); still to add it to verify.sh and CI.
 - B-138 P1 done (docs/NIST_AI_RMF_MAPPING.md)  Map NIST AI RMF (Govern, Map, Measure, Manage) and the GenAI profile to our documents and tests.
 - B-139 P1 todo  Independent penetration test and SOC 2 readiness path; needs budget and builder approval.
 - B-140 P1 todo  Managed key custody (KMS) for field encryption, with per-tenant keys.

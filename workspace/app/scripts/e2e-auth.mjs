@@ -151,6 +151,8 @@ try {
   // sign-out revokes server-side; the old cookie is dead even if replayed
   await proc.page.goto(`${base}/review`);
   await proc.page.click("button:has-text('Sign out')");
+  for (let t = 0; t < 10000 && new URL(proc.page.url()).pathname !== "/signed-out"; t += 100) await new Promise((r) => setTimeout(r, 100));
+  eq("clicking Sign out lands on the plain signed-out page (a redirect chain to the provider would be blocked by the form-action policy)", new URL(proc.page.url()).pathname, "/signed-out");
   await proc.page.waitForLoadState("networkidle");
   const replay = await fetch(`${base}/api/applications`, { method: "POST", headers: { "content-type": "application/json", cookie: `__Host-uw_session=${tok}` }, body: JSON.stringify(app) });
   eq("a replayed session cookie after sign-out is refused", replay.status, 401);

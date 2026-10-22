@@ -44,7 +44,7 @@ export default async function Apply({ searchParams }: { searchParams: Promise<{ 
     <main>
       <h1>Loan application</h1>
       <p><strong>Synthetic data only.</strong> Do not enter real borrower information.</p>
-      {submitted && <p role="status">Application received. Reference: <code>{submitted}</code></p>}
+      {submitted && <p role="status">Application received. <a href={`/review/${submitted}`}>Open the case to upload documents and build the file</a> (reference <code>{submitted}</code>).</p>}
       {error && <p role="alert" style={{ color: "#b00020" }}>{error}</p>}
       <form action={submit} style={{ display: "grid", gap: "0.75rem" }}>
         <label>Legal business name <input name="legalName" required maxLength={200} /></label>

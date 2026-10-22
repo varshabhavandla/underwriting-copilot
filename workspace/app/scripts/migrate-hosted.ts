@@ -1,4 +1,4 @@
-/** Applies the forward-only migrations to a hosted database as the owner role. Usage: OWNER_DATABASE_URL=postgres://uw_owner:...@host/db npm run db:migrate */
+/** Applies the forward-only migrations to a hosted database as the owner role. Usage: OWNER_DATABASE_URL=postgres://uw_owner:...@host/db npm run db:migrate secret-scan:allow */
 import { connect } from "../src/db/client";
 import { migrate } from "../src/db/migrate";
 

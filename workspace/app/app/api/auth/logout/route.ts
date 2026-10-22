@@ -23,7 +23,7 @@ export const POST = withRequest("auth_logout", { limit: { max: 20, windowMs: 60_
   await endSession(sql, token);
   inc("auth_logouts_total");
   // ASVS V14.3.1: ask the browser to drop cached pages and site storage that belonged to the signed-in user
-  const h = new Headers({ location: "/", "cache-control": "no-store", "clear-site-data": '"cache", "storage"' });
+  const h = new Headers({ location: "/signed-out", "cache-control": "no-store", "clear-site-data": '"cache", "storage"' });
   h.append("set-cookie", clearCookie(SESSION_COOKIE));
   return new Response(null, { status: 303, headers: h });
 });

@@ -29,6 +29,7 @@ LOC=$(curl -s -D - -o /dev/null -m 20 "$BASE/review" | tr -d '\r' | awk -F': ' '
 echo "$LOC" | grep -qE "/signin|/api/auth/login" && ok "and goes to sign-in" || bad "and goes to sign-in" "location [$LOC]"
 eq "the sign-in page is public" 200 "$(status "$BASE/signin")"
 eq "the no-access page is public" 200 "$(status "$BASE/forbidden")"
+eq "the signed-out page is public" 200 "$(status "$BASE/signed-out")"
 PH=$(hdrs "$BASE/signin")
 has "content-security-policy: frame-ancestors 'none'" "$PH" "pages forbid framing"
 has "referrer-policy: same-origin" "$PH" "referrer policy lets forms carry an origin"
