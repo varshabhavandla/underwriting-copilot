@@ -21,6 +21,7 @@ async function submit(form: FormData): Promise<void> {
     ein: String(form.get("ein") ?? ""),
     naics: String(form.get("naics") ?? ""),
     yearsInBusiness: Number(form.get("yearsInBusiness") ?? NaN),
+    requestedTermMonths: Number(form.get("requestedTermMonths") ?? NaN),
     loanAmount: String(form.get("loanAmount") ?? ""),
     purposes: form.getAll("purposes").map(String),
     owners,
@@ -55,6 +56,7 @@ export default async function Apply({ searchParams }: { searchParams: Promise<{ 
         <label>EIN (9 digits) <input name="ein" required pattern="\d{2}-?\d{7}" inputMode="numeric" autoComplete="off" /></label>
         <label>NAICS (6 digits) <input name="naics" required pattern="\d{6}" inputMode="numeric" /></label>
         <label>Years in business <input name="yearsInBusiness" type="number" min={0} required /></label>
+        <label>Requested term (months) <input name="requestedTermMonths" type="number" min={1} max={360} required /></label>
         <label>Loan amount (USD) <input name="loanAmount" required inputMode="decimal" /></label>
         <fieldset>
           <legend>Purposes</legend>

@@ -55,3 +55,6 @@ Accepted = faithfully extracted, cited to a passage that exists, valid for its t
 
 ## D-020 Import style (2026-10-22)
 Relative imports are extensionless (no .js suffix) because Next's Turbopack bundler does not map .js to .ts; TypeScript (Bundler resolution), tsx and Vitest all accept this.
+
+## D-021 Rules and memo boundaries (2026-10-22)
+Rules are deterministic code, read accepted facts only, cite an SOP section and version, and fail closed (a rule that cannot be evaluated is needs_review, never pass). Debt-service coverage is computed for the new loan alone with a placeholder lender-overlay rate; below 1.15 is a definite fail, otherwise needs_review because existing debt is unknown. A memo draft is stored only if every line cites a known source, every number matches the cited source, there is no decision language, and the four required sections exist; otherwise it becomes a memo_unverified exception. The tool never approves or declines; the build step leaves cases in needs_review.

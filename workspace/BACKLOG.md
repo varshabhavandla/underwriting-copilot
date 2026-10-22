@@ -21,7 +21,7 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-302 P0 done  Domain model + multi-tenant data layer: migration 0001 (forced RLS, append-only decisions and audit, hash-chained ledger, decision gate), repo layer, 42 tests on real Postgres 16, 4 mutation checks, end-to-end demo.
 - B-303 P0 done  Borrower application flow: validated application (SOP ownership total), EIN encrypted per tenant, /apply form and API, upload with content-type checks and encrypted storage. Dev-only tenant source; no auth or rate limiting (C-701).
 - B-304 P0 todo  Document ingestion: extraction/validation with confidence (tax returns, bank statements, financials).
-- B-305 P0 todo  Rules engine + AI agent: completeness, consistency, exceptions, credit memo draft.
+- B-305 P0 done  Rules engine (11 rules, SOP-cited, docs/RULE_PACK.md generated) + file builder: runs, exceptions, verified cited memo draft with the mock provider; 125 tests, 5 mutation checks. Real provider B-124.
 - B-306 P0 todo  Underwriter console with explicit approve/decline/request-info.
 - B-307 P1 todo  Mock servicing adapter + events/webhooks.
 - B-308 P0 todo  Evaluation harness + measured time-to-decision vs simulated baseline.
@@ -37,6 +37,8 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-124 P0 todo  Real model provider behind the gateway: verify data terms (retention, training, region, SOC report), implement, run eval harness (docs/MEASUREMENT_PLAN.md) and report real numbers. Needs builder approval before any external call.
 - B-125 P0 todo  OCR/PDF text extraction (provider choice D-015) so PDFs and scans are ingested; redaction of names and addresses; persistent token vault.
 - B-126 P1 todo  Rate limiting, authentication and CSRF review on upload and application routes; signed direct-to-storage uploads for production.
+- B-127 P1 todo  Lender overlay: replace the placeholder 9 percent assumed rate with lender pricing input; add existing-debt schedule and global cash flow (needed for DSC to resolve beyond needs_review).
+- B-128 P1 todo  Extend ingestion and rules to documents the pack lists as not evaluated (owner PFS, credit reports, tax transcripts, collateral, debt schedule).
 ## Workflow adoption (own design; skills from broomva/skills, MIT)
 - B-401 P1 todo  Root router + scoped instruction files per package; AGENTS.md as the canonical file with CLAUDE.md pointing to it; skills in one canonical dir.
 - B-402 P0 todo  Database-enforced invariants: forced row-level security on every table, no role with BYPASSRLS, append-only hash-chained audit/ledger, provenance required for every fact, one shared write path. Tests that fail if any is weakened.
@@ -80,3 +82,9 @@ Loop 7 (lender CISO / examiner view), objections and disposition:
 - C-702 P0: Everything is proven with a mock that reads printed labels. Real extraction quality, OCR and redaction effects are unmeasured. Action: B-124/B-125; no accuracy claim until then (MEASUREMENT_PLAN results section says so).
 - C-703 P1: "Accepted" can be misread as "verified true". Action: D-019 wording; the underwriter console (step 6) must label facts as extracted-and-consistent, and show unverified-against-source status.
 - C-704 P1: Redaction covers identifiers but not names or addresses, so a provider would still see them. Action: B-125 and contract terms with the provider.
+
+Loop 8 (lender CISO / examiner view), objections and disposition:
+- C-801 P0: Rule thresholds and SOP section names were drafted from machine-parsed text; one wrong constant misleads underwriters. Action: B-111/B-115 spot-check against the published SOP; RULE_PACK.md is generated so the lender can review one document.
+- C-802 P1: DSC uses an assumed rate and ignores existing debt, so it can only fail or ask for review, never confirm adequacy. Action: stated in every result; B-127.
+- C-803 P1: Rules read only accepted facts, so a defect that blocks acceptance can make a rule report needs_review or not applicable rather than a specific failure. Action: reviewed (freshness now reports needs_review); the ingestion exception still carries the specific defect; revisit when the console shows both together (step 6).
+- C-804 P1: The memo drafter is a mock; a real model may produce fluent text that fails the strict number-matching verifier often, increasing human work. Action: measure rejection rate in the real-provider evaluation (B-124) and tune prompts, not the verifier.

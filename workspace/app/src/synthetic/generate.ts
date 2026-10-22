@@ -42,18 +42,23 @@ export function makePacket(seed: number, variant: Variant, asOf = new Date("2026
     return `${SCHEMAS[type].find((f) => f.field === field)!.label}: ${shown}`;
   };
 
-  // tax return
+  // three years of tax returns (2025, 2024, 2023). The most recent one is the reference for reconciliation.
   const gross = cents(800_000, 3_000_000), net = cents(60_000, 400_000), officer = cents(60_000, 150_000), dep = cents(5_000, 60_000), interest = cents(2_000, 40_000);
-  docs.push({ id: "d_tax", type: "tax_return", pages: [[
-    `FORM 1120-S (SYNTHETIC EXAMPLE) ${legalName}`,
-    `EIN 12-3456789   Contact: owner@example.test  Phone: 555-123-4567`,
-    put("d_tax", "tax_return", "tax_year", "2025", "2025"),
-    put("d_tax", "tax_return", "gross_receipts", plain(gross), money(gross)),
-    put("d_tax", "tax_return", "officer_compensation", plain(officer), money(officer)),
-    put("d_tax", "tax_return", "depreciation", plain(dep), money(dep)),
-    put("d_tax", "tax_return", "interest_expense", plain(interest), money(interest)),
-    put("d_tax", "tax_return", "net_income", plain(net), money(net)),
-  ].join("\n")] });
+  for (const [i, year] of [[0, 2025], [1, 2024], [2, 2023]] as const) {
+    const id = i === 0 ? "d_tax" : `d_tax${year}`;
+    const k = i === 0 ? 1n : BigInt(100 - i * 7); // older years differ from the latest
+    const sc = (c: bigint) => (i === 0 ? c : (c * k) / 100n);
+    docs.push({ id, type: "tax_return", pages: [[
+      `FORM 1120-S (SYNTHETIC EXAMPLE) ${legalName}`,
+      `EIN 12-3456789   Contact: owner@example.test  Phone: 555-123-4567`,
+      put(id, "tax_return", "tax_year", String(year), String(year)),
+      put(id, "tax_return", "gross_receipts", plain(sc(gross)), money(sc(gross))),
+      put(id, "tax_return", "officer_compensation", plain(sc(officer)), money(sc(officer))),
+      put(id, "tax_return", "depreciation", plain(sc(dep)), money(sc(dep))),
+      put(id, "tax_return", "interest_expense", plain(sc(interest)), money(sc(interest))),
+      put(id, "tax_return", "net_income", plain(sc(net)), money(sc(net))),
+    ].join("\n")] });
+  }
 
   // two bank statements
   for (const [i, end] of [[1, 20], [2, 50]] as const) {

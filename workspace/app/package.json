@@ -15,7 +15,8 @@
     "start": "next start",
     "demo": "tsx scripts/demo-e2e.ts",
     "e2e": "bash scripts/e2e-web.sh",
-    "eval:extraction": "tsx scripts/eval-extraction.ts"
+    "eval:extraction": "tsx scripts/eval-extraction.ts",
+    "docs:rules": "tsx scripts/rule-pack-doc.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

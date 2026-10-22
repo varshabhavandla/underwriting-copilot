@@ -28,6 +28,7 @@ export interface LlmProvider {
   readonly id: string;
   readonly model: string;
   extract(req: ExtractRequest, signal: AbortSignal): Promise<unknown>;
+  draftMemo(req: import("../memo/types").MemoRequest, signal: AbortSignal): Promise<unknown>;
 }
 
 export class BudgetExceeded extends Error {}

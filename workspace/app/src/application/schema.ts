@@ -10,6 +10,7 @@ export const ApplicationInput = z
     ein,
     naics: z.string().regex(/^\d{6}$/, "NAICS must be 6 digits"),
     yearsInBusiness: z.number().int().min(0).max(300),
+    requestedTermMonths: z.number().int().min(1).max(360),
     loanAmount: z.string().transform((s, ctx) => {
       const c = parseAmountToCents(s);
       if (c === null || c <= 0n) {

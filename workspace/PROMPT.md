@@ -8,7 +8,7 @@ Verify (the only completion check):
   pg: start a disposable local Postgres 16 (see workspace/app/README.md), export UW_TEST_ADMIN_URL, then
   bash workspace/app/scripts/verify.sh   -> must print "verify: OK"
 
-Success condition for the current loop (loop 7): STATE.md says "loop 7 complete" AND verify passes AND steps 3 (application flow) and 4 (document ingestion) are implemented with tests.
+Success condition for the current loop (loop 9): STATE.md says "loop 9 complete" AND verify passes AND step 6 (underwriter console with explicit decision) is implemented with tests.
 Budget: stop and write STATE.md with the open question when blocked on something only the builder can supply (auth provider, lender conversations, Vercel connection, paid resources).
 
 Hard constraints: human underwriter decides; synthetic data only; no paid resources, no outside contact, nothing outside this repo without asking; no unverified claims; no real borrower data; secrets never committed.

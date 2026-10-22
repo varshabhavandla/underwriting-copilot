@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { canonical, squash } from "../extraction/normalize";
 import { DOC_TYPES, specFor, SCHEMAS, type DocType } from "../extraction/schemas";
 import { Redactor } from "./redact";
+import { MemoDraft, type MemoDraftT, type MemoProblem, type MemoRequest, type MemoSource } from "../memo/types";
+import { verifyMemo } from "../memo/verify";
 import { BudgetExceeded, ExtractResponse, ProviderFailed, type LlmProvider } from "./types";
 
 export interface GatewayOptions {
@@ -126,5 +128,44 @@ export class LlmGateway {
       verified.push({ field: f.field, value, canonicalValue: canon, page: f.page, passage });
     }
     return { verified, rejected, call: { ...base, outputHash, modelConfidence: parsed.data.modelConfidence, result: "ok" } };
+  }
+
+  /**
+   * Drafts memo sections from numbered sources only. The draft is verified line by line (see memo/verify.ts); a draft with any
+   * problem is returned as `draft: null` with the problems, never stored as a memo.
+   */
+  async draftMemo(caseId: string, businessName: string, sources: MemoSource[]): Promise<{ draft: MemoDraftT | null; problems: MemoProblem[]; call: LlmCallRecord }> {
+    const redactor = new Redactor();
+    const request: MemoRequest = {
+      task: "draft_memo", promptVersion: "draft-memo@1", businessName: redactor.redact(businessName),
+      sources: sources.map((s) => ({ ...s, text: redactor.redact(s.text) })),
+    };
+    const chars = JSON.stringify(request).length;
+    if (chars > this.opt.maxInputChars) throw new BudgetExceeded("memo input exceeds size limit");
+    const tokens = Math.ceil(chars / 4);
+    const used = this.spent.get(caseId) ?? { calls: 0, tokens: 0 };
+    if (used.calls + 1 > this.opt.maxCallsPerCase || used.tokens + tokens > this.opt.maxTokensPerCase) throw new BudgetExceeded("per-case model budget exhausted");
+    this.spent.set(caseId, { calls: used.calls + 1, tokens: used.tokens + tokens });
+    const inputHash = sha(JSON.stringify(request));
+    const base = { provider: this.provider.id, model: this.provider.model, promptVersion: request.promptVersion, inputHash, tokensEstimate: tokens, redactedItems: redactor.size };
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), this.opt.timeoutMs);
+    let raw: unknown;
+    try {
+      raw = await Promise.race([
+        this.provider.draftMemo(request, ac.signal),
+        new Promise<never>((_, rej) => ac.signal.addEventListener("abort", () => rej(new ProviderFailed("provider timeout")))),
+      ]);
+    } catch (e) {
+      return { draft: null, problems: [], call: { ...base, outputHash: "", result: "error", error: (e as Error).message } };
+    } finally {
+      clearTimeout(timer);
+    }
+    const outputHash = sha(JSON.stringify(raw));
+    const parsed = MemoDraft.safeParse(raw);
+    if (!parsed.success) return { draft: null, problems: [], call: { ...base, outputHash, result: "error", error: "output failed schema validation" } };
+    const restored: MemoDraftT = { sections: parsed.data.sections.map((sec) => ({ title: sec.title, lines: sec.lines.map((l) => ({ text: redactor.restore(l.text), cites: l.cites })) })) };
+    const problems = verifyMemo(restored, sources);
+    return { draft: problems.length ? null : restored, problems, call: { ...base, outputHash, result: "ok" } };
   }
 }

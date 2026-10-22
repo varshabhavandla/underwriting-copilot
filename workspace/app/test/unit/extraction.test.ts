@@ -42,7 +42,7 @@ describe("synthetic generator", () => {
   it("is deterministic and carries ground truth for every printed field", () => {
     const a = makePacket(7, "clean"), b = makePacket(7, "clean");
     expect(a).toEqual(b);
-    expect(a.truth.length).toBe(6 + 5 * 2 + 6);
+    expect(a.truth.length).toBe(3 * 6 + 5 * 2 + 6);
     expect(makePacket(8, "clean").docs[0]!.pages[0]).not.toBe(a.docs[0]!.pages[0]);
   });
 });

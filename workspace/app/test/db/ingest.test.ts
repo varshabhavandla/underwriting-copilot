@@ -9,6 +9,7 @@ import { makePacket, type Variant } from "../../src/synthetic/generate";
 import { dbEnabled, urls } from "./urls";
 
 const ASOF = new Date("2026-10-21T00:00:00Z");
+const FACTS = 3 * 6 + 5 * 2 + 6; // three tax returns, two bank statements, one financial statement
 
 describe.skipIf(!dbEnabled)("document ingestion on real Postgres", () => {
   let owner: Sql, app: Sql;
@@ -41,7 +42,7 @@ describe.skipIf(!dbEnabled)("document ingestion on real Postgres", () => {
   it("clean packet: every fact is cited, scored 1 and auto-accepted, with no exceptions", async () => {
     const r = await run(101, "clean");
     const f = await facts(r.caseId);
-    expect(f).toHaveLength(6 + 5 * 2 + 6);
+    expect(f).toHaveLength(FACTS);
     expect(f.every((x) => x.status === "accepted" && Number(x.evidence_score) === 1 && x.page === 1 && x.passage.length > 0)).toBe(true);
     expect(await excs(r.caseId)).toEqual([]);
   });
@@ -96,16 +97,16 @@ describe.skipIf(!dbEnabled)("document ingestion on real Postgres", () => {
     const pk = makePacket(110, "clean");
     const first = await ingestPacket(app, gw(), ASOF, { tenantId: tenant, userId: user }, pk);
     const before = await facts(first.caseId);
-    expect(before).toHaveLength(22);
+    expect(before).toHaveLength(FACTS);
     const d = first.docs[0]!;
     const again = await ingestDocument(app, gw(), ASOF, { tenantId: tenant, userId: user }, { caseId: first.caseId, documentId: d.documentId, docVersion: 1, docType: pk.docs[0]!.type, pages: pk.docs[0]!.pages });
     expect(again.skipped).toBe(true);
-    expect(await facts(first.caseId)).toHaveLength(22);
+    expect(await facts(first.caseId)).toHaveLength(FACTS);
   });
 
   it("another tenant sees none of it (positive control: the owner tenant does)", async () => {
     const r = await run(111, "clean");
-    expect((await facts(r.caseId)).length).toBe(22);
+    expect((await facts(r.caseId)).length).toBe(FACTS);
     const other = await withTenant(app, { tenantId: otherTenant }, (tx) => tx`select id from facts where case_id = ${r.caseId}`);
     expect(other).toHaveLength(0);
   });

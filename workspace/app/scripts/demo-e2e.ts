@@ -1,16 +1,22 @@
 /**
- * End-to-end slice on synthetic data: packet -> case -> documents -> cited facts -> rules/exceptions -> needs_review
- * -> underwriter decision -> approved -> audit chain verified. Run: UW_TEST_ADMIN_URL=... npm run demo
+ * Full local pipeline on synthetic data, no web server: application -> encrypted EIN -> document ingestion with cited facts ->
+ * rule pack -> verified memo -> needs_review -> underwriter decision -> audit chain verified.
+ * Run: UW_TEST_ADMIN_URL=... npm run demo
  */
-import { readFileSync, readdirSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import postgres from "postgres";
+import { submitApplication } from "../src/application/submit";
+import { LocalKeyProvider } from "../src/crypto/fieldCrypto";
 import { connect, withTenant } from "../src/db/client";
 import { migrate } from "../src/db/migrate";
-import { addDocument, appendAudit, createCase, proposeFact, recordDecision, setCaseStatus, verifyAuditChain } from "../src/db/repo";
-import { processPacket } from "../src/pipeline";
-import type { Packet } from "../src/models";
+import { addDocument, recordDecision, setCaseStatus, verifyAuditChain } from "../src/db/repo";
+import { buildFile } from "../src/file/buildFile";
+import { ingestDocument } from "../src/ingest/ingest";
+import { DEFAULT_OPTIONS, LlmGateway } from "../src/llm/gateway";
+import { MockProvider } from "../src/llm/mockProvider";
+import { makePacket, type Variant } from "../src/synthetic/generate";
 
 const admin = process.env["UW_TEST_ADMIN_URL"];
 if (!admin) throw new Error("set UW_TEST_ADMIN_URL to a disposable local Postgres");
@@ -19,6 +25,7 @@ const withDb = (user: string, pass: string, db: string) => {
   u.username = user; u.password = pass; u.pathname = `/${db}`;
   return u.toString();
 };
+const asOf = new Date("2026-10-21T00:00:00Z");
 
 const root = postgres(withDb(new URL(admin).username, new URL(admin).password, "postgres"), { onnotice: () => {}, max: 1 });
 await root.unsafe(readFileSync(join(import.meta.dirname, "..", "db", "bootstrap", "roles.sql"), "utf8"));
@@ -31,56 +38,47 @@ const app = connect(withDb("uw_app", "uw_app_dev", "uw_demo"));
 
 const [t] = await owner<{ id: string }[]>`select gen_random_uuid() as id`;
 const tenant = t!.id;
-const { uw } = await withTenant(owner, { tenantId: tenant }, async (tx) => {
+const uw = await withTenant(owner, { tenantId: tenant }, async (tx) => {
   await tx`insert into tenants (id, name) values (${tenant}, 'Demo Community Bank')`;
   const [u] = await tx<{ id: string }[]>`insert into users (tenant_id, email, role) values (${tenant}, 'underwriter@demo.example', 'underwriter') returning id`;
-  return { uw: u!.id };
+  return u!.id;
 });
+const ctx = { tenantId: tenant, userId: uw };
+const keys = new LocalKeyProvider(randomBytes(32));
+const gateway = () => new LlmGateway(new MockProvider("faithful"), DEFAULT_OPTIONS);
 
-const fixDir = join(import.meta.dirname, "..", "fixtures", "synthetic");
-for (const name of readdirSync(fixDir).filter((f) => f.endsWith(".json")).sort()) {
-  const fx = JSON.parse(readFileSync(join(fixDir, name), "utf8")) as { packet: any; expected: any };
-  const p = fx.packet;
-  const packet: Packet = {
-    caseRef: p.case_ref,
-    documents: p.documents,
-    facts: p.facts.map((f: any) => ({ key: f.key, value: f.value, citation: { docId: f.citation.doc_id, docVersion: f.citation.doc_version, page: f.citation.page, passage: f.citation.passage } })),
-  };
-  const hashes = packet.documents.map((d) => createHash("sha256").update(d.pages.join("\n")).digest("hex"));
-  const report = processPacket(packet);
-
-  const caseId = await withTenant(app, { tenantId: tenant, userId: uw }, async (tx) => {
-    const c = await createCase(tx, tenant, { caseRef: packet.caseRef, docHashes: hashes });
-    const docIds = new Map<string, string>();
-    for (const [i, d] of packet.documents.entries()) {
-      docIds.set(d.id, await addDocument(tx, tenant, { caseId: c.id, docType: d.type, contentSha256: hashes[i]!, storageKey: `${tenant}/${c.id}/${hashes[i]}`, version: d.version }));
-      await appendAudit(tx, tenant, { actorKind: "system", actorId: "ingest", action: "document.received", subject: { caseId: c.id, documentId: docIds.get(d.id) }, inputsRef: [hashes[i]!] });
-    }
-    for (const f of packet.facts) {
-      await proposeFact(tx, tenant, { caseId: c.id, key: f.key, value: f.value, citation: { docId: docIds.get(f.citation.docId)!, docVersion: f.citation.docVersion, page: f.citation.page, passage: f.citation.passage } });
-    }
-    for (const r of report.checklist.results) {
-      await appendAudit(tx, tenant, { actorKind: "system", actorId: "rules", action: "rule.evaluated", subject: { caseId: c.id, rule: r.ruleId, policyVersion: report.checklist.policyVersion }, result: r.outcome === "fail" ? "rejected" : "ok" });
-    }
-    await setCaseStatus(tx, c.id, "processing");
-    await setCaseStatus(tx, c.id, "needs_review");
-    return c.id;
+const variants: Variant[] = ["clean", "bank_arith_error", "balance_imbalance", "stale_statement", "income_mismatch", "injection"];
+let approvedOne = false;
+for (const [i, variant] of variants.entries()) {
+  const pk = makePacket(500 + i, variant, asOf);
+  const sub = await withTenant(app, ctx, (tx) => submitApplication(tx, keys, tenant, {
+    legalName: pk.legalName, entityType: "s_corp", ein: "12-3456789", naics: "722511", yearsInBusiness: 6, requestedTermMonths: 120, loanAmount: "$250,000",
+    purposes: ["equipment"], owners: [{ name: "A Owner", percent: 100 }], certifyAccurate: true,
+  }));
+  const ids: string[] = [];
+  await withTenant(app, ctx, async (tx) => {
+    for (const d of pk.docs) ids.push(await addDocument(tx, tenant, { caseId: sub.caseId, docType: d.type, contentSha256: createHash("sha256").update(d.pages.join("\n") + pk.caseRef).digest("hex"), storageKey: `${tenant}/${sub.caseId}/${d.id}` }));
   });
-
-  const exceptions = report.missingDocuments.length + report.conflicts.length + report.injectionFlags.length + (report.checklist.passed ? 0 : 1);
-  // Only a clean file is approved here, to show the gate; files with exceptions stay in review for a human.
-  if (exceptions === 0) {
-    await withTenant(app, { tenantId: tenant, userId: uw }, async (tx) => {
-      await recordDecision(tx, tenant, { caseId: caseId, userId: uw, decision: "approve", reasons: ["All required documents present; checklist passed"], policyVersion: report.checklist.policyVersion });
-      await setCaseStatus(tx, caseId, "approved");
+  const g = gateway();
+  for (const [j, d] of pk.docs.entries()) await ingestDocument(app, g, asOf, ctx, { caseId: sub.caseId, documentId: ids[j]!, docVersion: 1, docType: d.type, pages: d.pages });
+  const r = await buildFile(app, g, ctx, sub.caseId, asOf);
+  const [ex] = await withTenant(app, ctx, (tx) => tx<{ n: number; kinds: string }[]>`select count(*)::int as n, string_agg(distinct kind, ',') as kinds from exceptions where case_id = ${sub.caseId} and kind not like 'rule:%'`);
+  const [st] = await withTenant(app, ctx, (tx) => tx<{ status: string }[]>`select status from cases where id = ${sub.caseId}`);
+  const rc = (o: string) => r.results.filter((x) => x.outcome === o).length;
+  console.log(`${variant.padEnd(18)} memo=${r.memoStored ? "verified" : "REJECTED"} rules(pass/fail/review)=${rc("pass")}/${rc("fail")}/${rc("needs_review")} upstream-exceptions=${ex!.n}${ex!.kinds ? " [" + ex!.kinds + "]" : ""} status=${st!.status}`);
+  if (variant === "clean" && !approvedOne) {
+    // The underwriter reviews the prepared file and decides. Only this path can move a case to approved.
+    await withTenant(app, ctx, async (tx) => {
+      await recordDecision(tx, tenant, { caseId: sub.caseId, userId: uw, decision: "approve", reasons: ["Reviewed prepared file and cited evidence; open rule items accepted for follow-up"], policyVersion: "SOP 50 10 8.1" });
+      await setCaseStatus(tx, sub.caseId, "approved");
     });
+    const [after] = await withTenant(app, ctx, (tx) => tx<{ status: string }[]>`select status from cases where id = ${sub.caseId}`);
+    console.log(`${"".padEnd(18)} underwriter decision recorded -> status=${after!.status}`);
+    approvedOne = true;
   }
-  const [row] = await withTenant(app, { tenantId: tenant }, (tx) => tx<{ status: string }[]>`select status from cases where id = ${caseId}`);
-  console.log(`${packet.caseRef.padEnd(8)} exceptions=${exceptions} status=${row!.status}`);
 }
-
-const broken = await withTenant(app, { tenantId: tenant }, (tx) => verifyAuditChain(tx));
-const [n] = await withTenant(app, { tenantId: tenant }, (tx) => tx<{ n: number }[]>`select count(*)::int as n from audit_events`);
+const broken = await withTenant(app, ctx, (tx) => verifyAuditChain(tx));
+const [n] = await withTenant(app, ctx, (tx) => tx<{ n: number }[]>`select count(*)::int as n from audit_events`);
 console.log(`audit events=${n!.n} chain=${broken === null ? "intact" : "BROKEN at " + broken}`);
 await Promise.all([owner.end(), app.end()]);
 process.exit(broken === null ? 0 : 1);

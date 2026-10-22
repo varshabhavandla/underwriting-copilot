@@ -1,7 +1,8 @@
 import { SCHEMAS, type DocType } from "../extraction/schemas";
+import type { MemoRequest } from "../memo/types";
 import type { ExtractRequest, LlmProvider } from "./types";
 
-export type MockBehavior = "faithful" | "hallucinate" | "follow_injections" | "garbage" | "slow";
+export type MockBehavior = "faithful" | "hallucinate" | "follow_injections" | "garbage" | "slow" | "memo_fabricate" | "memo_decide" | "memo_miscite";
 
 /**
  * Deterministic stand-in for a model provider, used for tests and the local demo. "faithful" reads "Label: value" lines.
@@ -38,5 +39,24 @@ export class MockProvider implements LlmProvider {
       if (i >= 0) fields[i] = { ...fields[i]!, value: "999999999" }; // value that is not in the cited passage
     }
     return { fields, modelConfidence: 0.99 };
+  }
+
+  /** Builds each line from a single source's own text, so citations and numbers always agree, then injects failures on request. */
+  async draftMemo(req: MemoRequest, signal: AbortSignal): Promise<unknown> {
+    if (this.behavior === "slow") await new Promise((_, rej) => signal.addEventListener("abort", () => rej(new Error("aborted"))));
+    if (this.behavior === "garbage") return { sections: "nope" };
+    const by = (prefix: string) => req.sources.filter((s) => s.id.startsWith(prefix));
+    const line = (s: { id: string; text: string }) => ({ text: s.text, cites: [s.id] });
+    const sections = [
+      { title: "Business and request", lines: [{ text: `Prepared for underwriter review: ${req.businessName}.`, cites: by("A:name").map((s) => s.id) }, ...by("A:").filter((s) => s.id !== "A:name").map(line)] },
+      { title: "Financial summary", lines: [...by("F:").map(line), ...by("C:").map(line)] },
+      { title: "Rule results and exceptions", lines: [...by("R:"), ...by("X:")].map(line) },
+      { title: "Open items", lines: by("N:").map(line) },
+    ];
+    const first = req.sources.find((s) => s.id.startsWith("F:")) ?? req.sources[0]!;
+    if (this.behavior === "memo_fabricate") sections[1]!.lines.push({ text: "Projected revenue will reach $5,000,000.00 next year.", cites: [first.id] });
+    if (this.behavior === "memo_decide") sections[3]!.lines.push({ text: "We recommend approval of this request.", cites: [first.id] });
+    if (this.behavior === "memo_miscite") sections[1]!.lines[0] = { text: sections[1]!.lines[0]!.text, cites: ["F:does-not-exist"] };
+    return { sections };
   }
 }

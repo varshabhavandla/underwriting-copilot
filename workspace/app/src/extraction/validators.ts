@@ -58,7 +58,10 @@ export function validate(facts: FactView[], asOf: Date): ValidationIssue[] {
   }
 
   // reconcile the most recent tax return net income with the financial statement net income
-  const fsIds = byType(facts, "financial_statement"), trIds = byType(facts, "tax_return");
+  const fsIds = byType(facts, "financial_statement");
+  const years = byType(facts, "tax_return").map((id) => ({ id, year: Number(facts.find((f) => f.docId === id && f.field === "tax_year")?.canonicalValue ?? -1) }));
+  const latest = years.length ? Math.max(...years.map((y) => y.year)) : -1;
+  const trIds = years.filter((y) => y.year === latest || years.length === 1).map((y) => y.id);
   for (const fs of fsIds) for (const tr of trIds) {
     const a = val(facts, fs, "net_income"), b = val(facts, tr, "net_income");
     if (a === undefined || b === undefined) continue;
