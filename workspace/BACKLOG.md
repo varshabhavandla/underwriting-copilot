@@ -7,6 +7,7 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-102 P0 done  Competitive scan and provisional wedge (docs/COMPETITIVE_SCAN.md, D-010). Follow-up B-116.
 - B-103 P1 done  Measurement plan (docs/MEASUREMENT_PLAN.md). Execution is B-308.
 - B-113 P1 partial  Vercel fit check: function duration/payload limits, background jobs, Postgres and storage options, region pinning, data-handling terms; read the Trust Center SOC 2 scope. Decide D-008 (data store, storage, jobs).
+- B-114 [partial 2026-10-22, see docs/BENCHMARK.md] P2 todo  Verify competitor claims against primary sources before they enter the competitive scan.
 - B-115 P1 done  Read SOP Appendix 15 in full (equity injection percentages) and 504 chapters before encoding those rule packs; spot-check every rule vs the published SOP (see C-201).
 - B-116 P0 todo  Validate wedge: open vendor trust centers, find other SBA-specific vendors, and prepare 5 lender interview questions (A-10..A-12). Needs builder to arrange conversations.
 ## Phase 2

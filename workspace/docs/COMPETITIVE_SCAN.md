@@ -1,5 +1,6 @@
 # Competitive scan and wedge (B-102)
 
+Date: 2026-10-21. Method: web searches and page fetches (S-16..S-23).
 Labels: [V] stated on the cited page or release, [C] company claim we cannot verify, [I] our inference, [A] assumption.
 Search limits: results were summaries; vendor trust/security pages were not opened; absence of a feature in our results is NOT proof it does not exist.
 
@@ -17,6 +18,7 @@ Search limits: results were summaries; vendor trust/security pages were not open
 1. The "up to 80 percent" claim in the reference pitch matches a Parlay/nCino release: customers "noted the manual work needed to reach a credit-ready file dropped by up to 80 percent", unnamed and unmeasured [C, S-18]. Treat 80 percent as a hypothesis we measure ourselves (DECISIONS D-005, B-103).
 2. Front-end SBA intake and eligibility screening now has a funded partnership with the largest commercial-lending platform [V]. A solo builder should not compete there.
 3. SBA changed the game for eligibility: SBA determines eligibility from E-Tran data, so "eligibility screening" is a data-quality pre-check [V, S-12]. What remains lender-owned: credit analysis, documentation, collateral, credit memo, and exposure at guaranty purchase review [V, S-2].
+4. Vendor impact claims should be reported by file class, never as one headline figure; we do this in our own measurement plan (MEASUREMENT_PLAN.md) [I].
 5. Explainability and fair-lending packaging (Zest) is a sales requirement for any model-driven decisioning. Our design avoids ML credit scoring: AI extracts and drafts; rules and a human decide [I]. That narrows model-risk scope but does not remove the lender's vendor-management review.
 
 ## Gaps a solo builder could credibly exploit [I, to validate with lenders]
