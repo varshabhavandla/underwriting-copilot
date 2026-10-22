@@ -58,3 +58,6 @@ Relative imports are extensionless (no .js suffix) because Next's Turbopack bund
 
 ## D-021 Rules and memo boundaries (2026-10-22)
 Rules are deterministic code, read accepted facts only, cite an SOP section and version, and fail closed (a rule that cannot be evaluated is needs_review, never pass). Debt-service coverage is computed for the new loan alone with a placeholder lender-overlay rate; below 1.15 is a definite fail, otherwise needs_review because existing debt is unknown. A memo draft is stored only if every line cites a known source, every number matches the cited source, there is no decision language, and the four required sections exist; otherwise it becomes a memo_unverified exception. The tool never approves or declines; the build step leaves cases in needs_review.
+
+## D-022 Decision gate details (2026-10-22)
+Approving a case that still has open critical or high exceptions requires at least one recorded override explaining why; the database enforces it. A decided case (approved, declined, handed_off) accepts no further decision and no status change except approved to handed_off. Request-more-info moves a case to info_requested and is not final. The console labels facts as extracted and internally consistent, not verified against the source (D-019).

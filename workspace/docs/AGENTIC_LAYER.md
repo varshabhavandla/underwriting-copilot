@@ -104,3 +104,12 @@ Rule packs are versioned by SOP version and effective date; prompts are versione
 Built and tested (workspace/app/src/llm, extraction, ingest): gateway as single egress; task and field allowlists; per-case call and token budgets and an input size cap; redaction of SSN, EIN, account and routing numbers, emails and phone numbers with token restore; timeout; strict output schema; citation verification against the original text (page, passage and value must match); deterministic validators (bank arithmetic, balance sheet, stale statement, income reconciliation); injection tripwire that blocks auto-acceptance for the flagged document; audit events with hashes and prompt/model ids.
 Fact acceptance semantics (D-019): "accepted" means the value was faithfully extracted, cited, internally consistent and from an unflagged document. It does NOT mean the value is true. A borrower can print any number. Verifying truth (IRS transcripts, bank data, lender policy) is a separate, later step and stays with the underwriter.
 Not built: a real model provider and its data terms (D-015); OCR or PDF text extraction (PDF and image uploads are stored and routed to manual review); redaction of personal names and addresses; per-tenant persistent token vault; rate limiting and authentication on the upload route; memo drafting; exception disposition by an underwriter.
+
+## 10. Approval gates as implemented (loop 9)
+| Gate | Implementation |
+|---|---|
+| G-A Fact acceptance | Deterministic: citation verified, validators passed, document not flagged (ingest). No underwriter confirmation path yet (B-129) |
+| G-B Exception disposition | `disposeException`: underwriter only, note required, audited; database policy and trigger |
+| G-C Memo adoption | `adoptMemo`: underwriter only, once, audited; editing a memo before adoption is not built (B-129) |
+| G-D Credit decision | `decideCase`: underwriter acting as themselves; reasons required; override required to approve past open critical or high exceptions; final once decided |
+| G-E Rule or prompt change | Not enforced by tooling; builder review recorded in the repo (B-407) |

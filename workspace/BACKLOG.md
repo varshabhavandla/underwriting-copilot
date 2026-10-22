@@ -22,7 +22,7 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-303 P0 done  Borrower application flow: validated application (SOP ownership total), EIN encrypted per tenant, /apply form and API, upload with content-type checks and encrypted storage. Dev-only tenant source; no auth or rate limiting (C-701).
 - B-304 P0 todo  Document ingestion: extraction/validation with confidence (tax returns, bank statements, financials).
 - B-305 P0 done  Rules engine (11 rules, SOP-cited, docs/RULE_PACK.md generated) + file builder: runs, exceptions, verified cited memo draft with the mock provider; 125 tests, 5 mutation checks. Real provider B-124.
-- B-306 P0 todo  Underwriter console with explicit approve/decline/request-info.
+- B-306 P0 done  Underwriter console: /review list and case page (facts with citations, rules, exceptions, cited memo, audit), exception disposition, memo adoption, decision API and form; DB-enforced gate; 137 tests; 5+2 mutation checks.
 - B-307 P1 todo  Mock servicing adapter + events/webhooks.
 - B-308 P0 todo  Evaluation harness + measured time-to-decision vs simulated baseline.
 - B-309 P1 todo  Observability, hardening, threat model review.
@@ -39,6 +39,7 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-126 P1 todo  Rate limiting, authentication and CSRF review on upload and application routes; signed direct-to-storage uploads for production.
 - B-127 P1 todo  Lender overlay: replace the placeholder 9 percent assumed rate with lender pricing input; add existing-debt schedule and global cash flow (needed for DSC to resolve beyond needs_review).
 - B-128 P1 todo  Extend ingestion and rules to documents the pack lists as not evaluated (owner PFS, credit reports, tax transcripts, collateral, debt schedule).
+- B-129 P1 todo  Console gaps: underwriter confirmation of individual facts (G-A), memo editing before adoption, source-document viewer next to each citation, accessibility review, pagination.
 ## Workflow adoption (own design; skills from broomva/skills, MIT)
 - B-401 P1 todo  Root router + scoped instruction files per package; AGENTS.md as the canonical file with CLAUDE.md pointing to it; skills in one canonical dir.
 - B-402 P0 todo  Database-enforced invariants: forced row-level security on every table, no role with BYPASSRLS, append-only hash-chained audit/ledger, provenance required for every fact, one shared write path. Tests that fail if any is weakened.
@@ -88,3 +89,9 @@ Loop 8 (lender CISO / examiner view), objections and disposition:
 - C-802 P1: DSC uses an assumed rate and ignores existing debt, so it can only fail or ask for review, never confirm adequacy. Action: stated in every result; B-127.
 - C-803 P1: Rules read only accepted facts, so a defect that blocks acceptance can make a rule report needs_review or not applicable rather than a specific failure. Action: reviewed (freshness now reports needs_review); the ingestion exception still carries the specific defect; revisit when the console shows both together (step 6).
 - C-804 P1: The memo drafter is a mock; a real model may produce fluent text that fails the strict number-matching verifier often, increasing human work. Action: measure rejection rate in the real-provider evaluation (B-124) and tune prompts, not the verifier.
+
+Loop 9 (lender CISO / examiner view), objections and disposition:
+- C-901 P0: The console runs on a dev tenant and user stub, so "authorized underwriter" is a database role, not a verified identity. Action: D-011/B-117 before any real use; MFA and SSO for staff.
+- C-902 P1: An override is free text; an underwriter can type anything. Action: this is intended accountability (recorded, audited, reviewable); add reporting on overrides to the monitoring dashboard (B-309) and consider a required reason taxonomy with the lender.
+- C-903 P1: The page shows document passages verbatim; hostile content is escaped by React but could still mislead a reader. Action: injection-flagged documents are labeled critical; add visible flags next to each affected fact in B-129.
+- C-904 P1: No pagination, concurrency control or optimistic locking on decisions; two underwriters could act on one case. Action: the final-decision guard makes the second attempt fail safely; add case assignment and locking (B-129).

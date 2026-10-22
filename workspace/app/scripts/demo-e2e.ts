@@ -11,7 +11,8 @@ import { submitApplication } from "../src/application/submit";
 import { LocalKeyProvider } from "../src/crypto/fieldCrypto";
 import { connect, withTenant } from "../src/db/client";
 import { migrate } from "../src/db/migrate";
-import { addDocument, recordDecision, setCaseStatus, verifyAuditChain } from "../src/db/repo";
+import { addDocument, verifyAuditChain } from "../src/db/repo";
+import { adoptMemo, decideCase } from "../src/review/actions";
 import { buildFile } from "../src/file/buildFile";
 import { ingestDocument } from "../src/ingest/ingest";
 import { DEFAULT_OPTIONS, LlmGateway } from "../src/llm/gateway";
@@ -68,10 +69,9 @@ for (const [i, variant] of variants.entries()) {
   console.log(`${variant.padEnd(18)} memo=${r.memoStored ? "verified" : "REJECTED"} rules(pass/fail/review)=${rc("pass")}/${rc("fail")}/${rc("needs_review")} upstream-exceptions=${ex!.n}${ex!.kinds ? " [" + ex!.kinds + "]" : ""} status=${st!.status}`);
   if (variant === "clean" && !approvedOne) {
     // The underwriter reviews the prepared file and decides. Only this path can move a case to approved.
-    await withTenant(app, ctx, async (tx) => {
-      await recordDecision(tx, tenant, { caseId: sub.caseId, userId: uw, decision: "approve", reasons: ["Reviewed prepared file and cited evidence; open rule items accepted for follow-up"], policyVersion: "SOP 50 10 8.1" });
-      await setCaseStatus(tx, sub.caseId, "approved");
-    });
+    const memo = (await withTenant(app, ctx, (tx) => tx<{ id: string }[]>`select id from memos where case_id = ${sub.caseId}`))[0]!;
+    await adoptMemo(app, ctx, { memoId: memo.id });
+    await decideCase(app, ctx, { caseId: sub.caseId, decision: "approve", reasons: ["Reviewed prepared file and cited evidence; open rule items accepted for follow-up"] });
     const [after] = await withTenant(app, ctx, (tx) => tx<{ status: string }[]>`select status from cases where id = ${sub.caseId}`);
     console.log(`${"".padEnd(18)} underwriter decision recorded -> status=${after!.status}`);
     approvedOne = true;

@@ -48,6 +48,25 @@ expect "memo stored and verified" 1 "$(echo "$RB" | head -1 | grep -c '"memoStor
 expect "case left in needs_review, never approved" 1 "$(echo "$RB" | head -1 | grep -c '"status":"needs_review"')"
 expect "build on an unknown case -> 404" 404 "$(code -X POST "$B/api/cases/00000000-0000-4000-8000-000000000000/build")"
 
+
+RV=$(curl -s "$B/review/$CASE"); 
+expect "review page shows facts with citations" 1 "$(echo "$RV" | grep -c 'Facts with citations')"
+expect "review page shows SOP rule results" 1 "$(echo "$RV" | grep -c 'Rule results (SBA SOP 50 10)')"
+expect "review page shows a decision form" 1 "$(echo "$RV" | grep -c 'Record decision')"
+expect "review page states facts are not verified against source" 1 "$(echo "$RV" | grep -c 'not verified against the original source')"
+expect "review list shows the business" 1 "$(curl -s "$B/review" | grep -c 'Harbor Diner Inc')"
+expect "review for unknown case -> 404" 404 "$(code "$B/review/00000000-0000-4000-8000-000000000000")"
+expect "decision: invalid body -> 400" 400 "$(code -X POST "$B/api/cases/$CASE/decision" -H "$J" -d '{"decision":"maybe","reasons":["x"]}')"
+expect "decision: no reasons -> 400" 400 "$(code -X POST "$B/api/cases/$CASE/decision" -H "$J" -d '{"decision":"approve","reasons":[]}')"
+expect "decision: unknown case -> 404" 404 "$(code -X POST "$B/api/cases/00000000-0000-4000-8000-000000000000/decision" -H "$J" -d '{"decision":"approve","reasons":["x"]}')"
+RD=$(curl -s -w "\n%{http_code}" -X POST "$B/api/cases/$CASE/decision" -H "$J" -d '{"decision":"approve","reasons":["Reviewed"]}')
+expect "approve with open high exceptions and no override -> 403" 403 "$(echo "$RD" | tail -1)"
+expect "case still needs_review after the refused approval" needs_review "$(psqlx -c "select status from cases where id='$CASE'")"
+RD2=$(curl -s -w "\n%{http_code}" -X POST "$B/api/cases/$CASE/decision" -H "$J" -d '{"decision":"approve","reasons":["Reviewed"],"overrides":["Missing statements to be collected before closing"]}')
+expect "approve with a recorded override -> 200" 200 "$(echo "$RD2" | tail -1)"
+expect "second decision on a decided case -> 403" 403 "$(code -X POST "$B/api/cases/$CASE/decision" -H "$J" -d '{"decision":"decline","reasons":["changed mind"]}')"
+expect "case approved only through the decision" approved "$(psqlx -c "select status from cases where id='$CASE'")"
+expect "decision recorded as the underwriter, with policy version" "1 sba-7a@SOP 50 10 8.1" "$(psqlx -c "select count(*)||' '||max(policy_version) from decisions where case_id='$CASE'")"
 expect "one application stored" 1 "$(psqlx -c "select count(*) from applications")"
 expect "EIN is not plaintext in the database" 0 "$(psqlx -c "select count(*) from applications where encode(ein_ciphertext,'escape') like '%3456789%'")"
 expect "only last4 stored in the clear" 6789 "$(psqlx -c "select ein_last4 from applications")"
@@ -55,7 +74,6 @@ expect "6 accepted facts, all cited" 6 "$(psqlx -c "select count(*) from facts w
 expect "manual-review exception for the pdf" 1 "$(psqlx -c "select count(*) from exceptions where case_id='$CASE' and kind='ocr_required'")"
 expect "rule run recorded with 11 results and one verified memo" "1 11 1" "$(psqlx -c "select (select count(*) from rule_runs where case_id='$CASE')||' '||(select count(*) from rule_results where case_id='$CASE')||' '||(select count(*) from memos where case_id='$CASE')")"
 expect "missing documents are flagged by rule" 1 "$(psqlx -c "select count(*) from exceptions where case_id='$CASE' and kind='rule:required-documents'")"
-expect "case status is needs_review" needs_review "$(psqlx -c "select status from cases where id='$CASE'")"
 expect "2 stored objects, none readable as plaintext" "2 0" "$(echo "$(find "$WORK/uploads" -type f | wc -l) $(grep -rl 'Net income' "$WORK/uploads" | wc -l)")"
 CH=$(PGPASSWORD=uw_app_dev psql -h "$H" -p "$PORT" -U uw_app -d $DB -tAq -c "select set_config('app.tenant_id','$T',false)" -c "select coalesce(audit_verify_chain()::text,'intact')" | tail -1)
 expect "audit chain verifies" intact "$CH"
