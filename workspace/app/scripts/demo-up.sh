@@ -3,6 +3,8 @@
 # Needs: UW_TEST_ADMIN_URL (disposable local Postgres superuser), psql, openssl. Synthetic data only.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. scripts/lib/bgstart.sh
+. scripts/lib/killport.sh
 : "${UW_TEST_ADMIN_URL:?set UW_TEST_ADMIN_URL}"
 PORT_WEB=${WEB_PORT:-3000}
 npm run demo >/dev/null
@@ -12,8 +14,8 @@ IDP_PORT=${IDP_PORT:-4010}; ISS="http://127.0.0.1:$IDP_PORT"; SECRET=$(openssl r
 npx tsx scripts/seed-staff.ts uw_demo "$ISS" >/dev/null
 mkdir -p .demo-uploads
 # Sign-in uses the local fake identity provider (development only): pick Admin, Processor, Underwriter or Viewer on its page.
-trap '[ -n "${IDP:-}" ] && kill -- -$IDP 2>/dev/null' EXIT
-setsid npx tsx scripts/fake-idp.ts "$IDP_PORT" uw-client "$SECRET" "http://127.0.0.1:$PORT_WEB/api/auth/callback" sub-admin:Admin sub-processor:Processor sub-underwriter:Underwriter sub-viewer:Viewer > /dev/null 2>&1 & IDP=$!
+trap '[ -n "${IDP:-}" ] && kill -- -$IDP 2>/dev/null; killport "$IDP_PORT"' EXIT
+bgstart npx tsx scripts/fake-idp.ts "$IDP_PORT" uw-client "$SECRET" "http://127.0.0.1:$PORT_WEB/api/auth/callback" sub-admin:Admin sub-processor:Processor sub-underwriter:Underwriter sub-viewer:Viewer > /dev/null 2>&1 & IDP=$!
 export DATABASE_URL="postgres://uw_app:uw_app_dev@$HP/uw_demo" UPLOAD_DIR="$PWD/.demo-uploads" FIELD_KEY_MASTER=$(openssl rand -base64 32) WORKER_SECRET=demo-worker-secret-0123456789abcdef \
   OIDC_ISSUER="$ISS" OIDC_CLIENT_ID=uw-client OIDC_CLIENT_SECRET="$SECRET" OIDC_REDIRECT_URI="http://127.0.0.1:$PORT_WEB/api/auth/callback"
 # next dev, not next start: production mode requires https identity-provider URLs and refuses the development fake provider setup, by design
