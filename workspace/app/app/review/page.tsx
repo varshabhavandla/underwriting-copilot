@@ -1,14 +1,13 @@
 import Link from "next/link";
 import { withTenant } from "@/db/client";
 import { listCases } from "@/review/queries";
-import { services } from "@/server/services";
+import { requireSession } from "@/server/guard";
 
 export const dynamic = "force-dynamic";
 const usd = (c: string | null) => (c === null ? "n/a" : `$${(BigInt(c) / 100n).toLocaleString("en-US")}`);
 
 export default async function Review() {
-  const s = services();
-  if (!s) return <main><h1>Review</h1><p>No authenticated tenant. Sign-in is not built yet (decision D-011).</p></main>;
+  const s = await requireSession("view", "/review");
   const rows = await withTenant(s.sql, { tenantId: s.tenantId }, (tx) => listCases(tx));
   return (
     <main>

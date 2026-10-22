@@ -10,7 +10,9 @@ Local, no cloud accounts needed.
 
 Roles: `uw_owner` owns tables and runs migrations; `uw_app` is what the app uses (not superuser, no BYPASSRLS, owns nothing). Passwords here are local-only.
 
-Web API (development; tenant comes from `DEV_TENANT_ID`, real sign-in is not built): `POST /api/applications` (JSON), `POST /api/applications/<caseId>/documents` (multipart `file`, `docType` of tax_return, bank_statement or financial_statement), `POST /api/cases/<caseId>/build` (runs the SBA rule pack and drafts a verified memo; never approves), `/apply` form. Extra env: `FIELD_KEY_MASTER` (base64, 32+ bytes, local key derivation only), `UPLOAD_DIR`.
+Sign-in: OpenID Connect (docs/AUTHENTICATION.md). Set `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI` to require a session on every route; production refuses to start without them. `scripts/demo-up.sh` runs a local fake provider so you can sign in as Admin, Processor, Underwriter or Viewer. Browser end-to-end check: `npm run e2e:auth` (needs Chromium: `PW_CHROMIUM=/path/to/chrome` or `npx playwright-core install chromium`). Without OIDC settings, non-production runs fall back to the legacy `DEV_TENANT_ID` identity.
+
+Web API (needs a session; in legacy development mode the tenant comes from `DEV_TENANT_ID`): `POST /api/applications` (JSON), `POST /api/applications/<caseId>/documents` (multipart `file`, `docType` of tax_return, bank_statement or financial_statement), `POST /api/cases/<caseId>/build` (runs the SBA rule pack and drafts a verified memo; never approves), `/apply` form. Extra env: `FIELD_KEY_MASTER` (base64, 32+ bytes, local key derivation only), `UPLOAD_DIR`.
 Extraction evaluation: `npm run eval:extraction` (scores the pipeline with a mock provider; not model quality).
 
 Rule pack documentation is generated: `npm run docs:rules` rewrites `workspace/docs/RULE_PACK.md` (a test fails if it is stale).

@@ -30,11 +30,23 @@ describe("static claims in the ASVS self-assessment", () => {
 describe("production configuration guards (V12.3.1, V13.2.3)", () => {
   const saved = { ...process.env };
   afterEach(() => { process.env = { ...saved }; });
-  const prod = (url: string) => { process.env = { ...saved, NODE_ENV: "production", DATABASE_URL: url }; delete process.env["DEV_TENANT_ID"]; delete process.env["DEV_USER_ID"]; return () => serverEnv(); };
-  it("accepts an encrypted connection with a non-development credential", () => expect(prod("postgres://uw_app:Zk3-long-random-value@db.example.com/app?sslmode=require")).not.toThrow());
-  it("refuses a connection without sslmode", () => expect(prod("postgres://uw_app:Zk3-long-random-value@db.example.com/app")).toThrow(/sslmode/));
-  it("refuses sslmode=disable and prefer", () => { expect(prod("postgres://u:Zk3-long@db.example.com/app?sslmode=disable")).toThrow(/sslmode/); expect(prod("postgres://u:Zk3-long@db.example.com/app?sslmode=prefer")).toThrow(/sslmode/); });
+  const OIDC = { OIDC_ISSUER: "https://idp.example.com", OIDC_CLIENT_ID: "uw", OIDC_CLIENT_SECRET: "x".repeat(24), OIDC_REDIRECT_URI: "https://app.example.com/api/auth/callback" }; // secret-scan:allow (synthetic test value)
+  const prod = (url: string, extra: Record<string, string | undefined> = {}) => { process.env = { ...saved, NODE_ENV: "production", DATABASE_URL: url, ...OIDC, ...extra }; if (!("DEV_TENANT_ID" in extra)) delete process.env["DEV_TENANT_ID"]; delete process.env["DEV_USER_ID"]; for (const [k, v] of Object.entries(extra)) if (v === undefined) delete process.env[k]; return () => serverEnv(); };
+  it("accepts an encrypted connection with a non-development credential", () => expect(prod("postgres://uw_app:Zk3-long-random-value@db.example.com/app?sslmode=require")).not.toThrow()); // secret-scan:allow (synthetic test value)
+  it("refuses a connection without sslmode", () => expect(prod("postgres://uw_app:Zk3-long-random-value@db.example.com/app")).toThrow(/sslmode/)); // secret-scan:allow (synthetic test value)
+  it("refuses sslmode=disable and prefer", () => { expect(prod("postgres://u:Zk3-long@db.example.com/app?sslmode=disable")).toThrow(/sslmode/); expect(prod("postgres://u:Zk3-long@db.example.com/app?sslmode=prefer")).toThrow(/sslmode/); }); // secret-scan:allow (synthetic test value)
   it("refuses development credentials", () => { expect(prod("postgres://uw_app:uw_app_dev@db.example.com/app?sslmode=require")).toThrow(/development credential/); expect(prod("postgres://u:postgres@db.example.com/app?sslmode=require")).toThrow(/development credential/); });
+  const GOOD = "postgres://uw_app:Zk3-long-random-value@db.example.com/app?sslmode=require"; // secret-scan:allow (synthetic test value)
+  it("requires sign-in configuration in production (V6)", () => {
+    for (const k of ["OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_REDIRECT_URI", "OIDC_CLIENT_SECRET"]) expect(prod(GOOD, { [k]: undefined }), k).toThrow(/OIDC_/);
+  });
+  it("requires https for the identity provider and callback in production", () => {
+    expect(prod(GOOD, { OIDC_ISSUER: "http://idp.example.com" })).toThrow(/https/);
+    expect(prod(GOOD, { OIDC_REDIRECT_URI: "http://app.example.com/api/auth/callback" })).toThrow(/https/);
+  });
+  it("refuses the development identity in production even when sign-in is configured", () => {
+    expect(prod(GOOD, { DEV_TENANT_ID: "e320705d-c416-4931-9885-85e4971fff32" })).toThrow(/DEV_TENANT_ID/);
+  });
   it("control: the same development URL is accepted outside production", () => { process.env = { ...saved, NODE_ENV: "development", DATABASE_URL: "postgres://uw_app:uw_app_dev@127.0.0.1:54329/uw" }; expect(() => serverEnv()).not.toThrow(); });
 });
 

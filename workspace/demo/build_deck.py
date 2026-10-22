@@ -46,15 +46,15 @@ slide("""<h2>Controls built in</h2><ul>
 <li><b>Evidence:</b> no fact without a page and quote; accepted means faithfully extracted, not verified true.</li>
 <li><b>Isolation:</b> per-lender data separation enforced by the database; append-only, hash-chained audit log.</li>
 <li><b>Safety:</b> identifiers encrypted and redacted before any model call; document text is never treated as instructions.</li>
-<li><b>Hardening:</b> rate limits, scrubbed logs, security headers, threat model mapped to tests.</li></ul>""")
+<li><b>Sign-in:</b> OpenID Connect, role-based access (only underwriters decide), sessions revocable at once, every sign-in audited.</li><li><b>Hardening:</b> rate limits, scrubbed logs, security headers, threat model mapped to tests.</li></ul>""")
 
 slide("""<h2>What it is not yet</h2><ul>
-<li>No real model, OCR, sign-in or hosting; no real documents tested.</li>
+<li>No real model, OCR, identity provider or hosting; no real documents tested. Sign-in is built to the OpenID Connect standard and tested with a stand-in provider.</li>
 <li>Debt service covers the new loan only, with a placeholder rate; eligibility, collateral and credit reports are not evaluated.</li>
 <li>No third-party security test, no lender vendor-risk review, and items awaiting counsel and compliance review.</li></ul>""")
 
 slide("""<h2>90-day plan and what we need from you</h2><table><tr><th>Days</th><th>Work</th><th>Gate</th></tr>
-<tr><td>1-30</td><td>Confirm requirements; timed manual baseline with two underwriters; sign-in approach</td><td>Requirements and a measured baseline</td></tr>
+<tr><td>1-30</td><td>Confirm requirements; timed manual baseline with two underwriters; identity provider (sign-in is built)</td><td>Requirements and a measured baseline</td></tr>
 <tr><td>31-60</td><td>With approval: one real model provider, OCR; real accuracy report including failures</td><td>Go / no-go</td></tr>
 <tr><td>61-90</td><td>Pilot on redacted, consented files with your policy; both flows timed; security test and counsel review</td><td>Measured comparison; continue or stop</td></tr></table>
 <p class=small>Stop if a figure reaches a decision unflagged and wrong, if it does not beat the baseline, or if a vendor or regulatory requirement cannot be met.</p>""")

@@ -3,21 +3,21 @@ import { notFound, redirect } from "next/navigation";
 import { withTenant } from "@/db/client";
 import { adoptMemo, ActionDenied, decideCase, disposeException, type DecisionKind } from "@/review/actions";
 import { caseDetail, describeCite } from "@/review/queries";
-import { services } from "@/server/services";
+import { requireSession } from "@/server/guard";
+import { can, type Action } from "@/auth/roles";
 
 export const dynamic = "force-dynamic";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const usd = (c: string) => `$${(BigInt(c) / 100n).toLocaleString("en-US")}`;
-const ctxOf = () => {
-  const s = services();
-  if (!s) redirect("/review");
-  return { s: s!, ctx: { tenantId: s!.tenantId, ...(s!.userId ? { userId: s!.userId } : {}) } };
+const ctxOf = async (action: Action, caseId?: string) => {
+  const s = await requireSession(action, caseId ? `/review/${caseId}` : "/review");
+  return { s, ctx: { tenantId: s.tenantId, ...(s.userId ? { userId: s.userId } : {}) } };
 };
 const back = (caseId: string, msg?: string) => redirect(`/review/${caseId}${msg ? "?msg=" + encodeURIComponent(msg) : ""}`);
 
 async function decide(form: FormData): Promise<void> {
   "use server";
-  const { s, ctx } = ctxOf();
+  const { s, ctx } = await ctxOf("decide", String(form.get("caseId")));
   const caseId = String(form.get("caseId"));
   const decision = String(form.get("decision")) as DecisionKind;
   if (!UUID.test(caseId) || !["approve", "decline", "request_more_info"].includes(decision)) return back(caseId, "invalid request");
@@ -31,7 +31,7 @@ async function decide(form: FormData): Promise<void> {
 }
 async function dispose(form: FormData): Promise<void> {
   "use server";
-  const { s, ctx } = ctxOf();
+  const { s, ctx } = await ctxOf("decide", String(form.get("caseId")));
   const caseId = String(form.get("caseId"));
   try {
     await disposeException(s.sql, ctx, { exceptionId: String(form.get("exceptionId")), note: String(form.get("note") ?? "") });
@@ -43,7 +43,7 @@ async function dispose(form: FormData): Promise<void> {
 }
 async function adopt(form: FormData): Promise<void> {
   "use server";
-  const { s, ctx } = ctxOf();
+  const { s, ctx } = await ctxOf("decide", String(form.get("caseId")));
   const caseId = String(form.get("caseId"));
   try {
     await adoptMemo(s.sql, ctx, { memoId: String(form.get("memoId")) });
@@ -58,9 +58,8 @@ export default async function CaseReview({ params, searchParams }: { params: Pro
   const { caseId } = await params;
   const { msg } = await searchParams;
   if (!UUID.test(caseId)) notFound();
-  const s = services();
-  if (!s) redirect("/review");
-  const d = await withTenant(s!.sql, { tenantId: s!.tenantId }, (tx) => caseDetail(tx, caseId));
+  const s = await requireSession("view", `/review/${caseId}`);
+  const d = await withTenant(s.sql, { tenantId: s.tenantId }, (tx) => caseDetail(tx, caseId));
   if (!d) notFound();
   const decided = ["approved", "declined"].includes(d.caseRow.status);
   const a = d.application;
@@ -113,7 +112,7 @@ export default async function CaseReview({ params, searchParams }: { params: Pro
 
       <section><h2>Decision</h2>
         {d.decisions.map((x, i) => <p key={i}>Recorded: <strong>{x.decision}</strong> — {x.reasons.join("; ")}{x.overrides.length ? ` (overrides: ${x.overrides.join("; ")})` : ""} [{x.policy_version}]</p>)}
-        {!decided && (
+        {!decided && can(s.role, "decide") && (
           <form action={decide} style={{ display: "grid", gap: 8, maxWidth: 560 }}>
             <input type="hidden" name="caseId" value={caseId} />
             <label><input type="radio" name="decision" value="approve" required /> Approve</label>

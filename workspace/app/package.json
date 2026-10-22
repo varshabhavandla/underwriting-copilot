@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "evals": "tsx scripts/run-evals.ts",
-    "verify": "npm run typecheck && npm run secret-scan && npm run test && npm run evals && npm run eval:extraction >/dev/null && EVAL_N=3 EVAL_OUT=$(mktemp) npm run eval:pipeline >/dev/null && npm run demo >/dev/null && npm run build && npm run e2e",
+    "verify": "npm run typecheck && npm run secret-scan && npm run test && npm run evals && npm run eval:extraction >/dev/null && EVAL_N=3 EVAL_OUT=$(mktemp) npm run eval:pipeline >/dev/null && npm run demo >/dev/null && npm run build && npm run e2e && npm run e2e:auth",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -21,17 +21,20 @@
     "timing": "tsx scripts/timing-analysis.ts",
     "export:packets": "tsx scripts/export-packets.ts",
     "secret-scan": "tsx scripts/secret-scan.ts",
-    "sbom": "npm sbom --sbom-format cyclonedx --omit dev > sbom.cdx.json"
+    "sbom": "npm sbom --sbom-format cyclonedx --omit dev > sbom.cdx.json",
+    "e2e:auth": "bash scripts/e2e-auth.sh"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "playwright-core": "^1.56.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
   },
   "dependencies": {
+    "jose": "^6.2.13",
     "next": "^16.4.2",
     "postgres": "^3.4.9",
     "react": "^19.3.1",

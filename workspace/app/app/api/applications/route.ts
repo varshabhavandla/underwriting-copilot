@@ -3,13 +3,16 @@ import { withTenant } from "@/db/client";
 import { submitApplication } from "@/application/submit";
 import { withRequest, readJson } from "@/http/withRequest";
 import { inc } from "@/observability/metrics";
+import { deny } from "@/server/guard";
 import { services } from "@/server/services";
 
 export const dynamic = "force-dynamic";
 
 export const POST = withRequest("applications", { limit: { max: 30, windowMs: 60_000 }, json: true }, async (req) => {
-  const s = services();
-  if (!s) return Response.json({ error: "unauthenticated" }, { status: 401 });
+  const s = await services();
+  const denied = deny(s, "intake");
+  if (denied) return denied;
+  if (!s) throw new Error("unreachable");
   const body = await readJson(req, 64 * 1024);
   if (!body.ok) return Response.json({ error: body.status === 413 ? "body too large" : "invalid json" }, { status: body.status });
   try {

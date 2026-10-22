@@ -4,5 +4,5 @@ import { setupDatabase } from "./lib/setupDb";
 const admin = process.env["UW_TEST_ADMIN_URL"];
 const db = process.argv[2];
 if (!admin || !db) throw new Error("usage: UW_TEST_ADMIN_URL=... tsx scripts/setup-db.ts <dbname>");
-const r = await setupDatabase(admin, db);
+const r = await setupDatabase(admin, db, process.env["SETUP_ISSUER"] ? { issuer: process.env["SETUP_ISSUER"] } : {});
 console.log(`TENANT=${r.tenant}\nUSER=${r.user}`);

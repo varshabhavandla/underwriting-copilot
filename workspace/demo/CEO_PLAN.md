@@ -9,7 +9,7 @@ Commercial loan files, SBA 7(a) first, take underwriter time on document handlin
 - M: working intake, extraction with citations, 11 SBA rules, exception list, verified memo draft, review console with a database-enforced human decision gate, audit trail, mock servicing handoff. About 200 automated tests pass, including a real-database end-to-end run.
 - M: on 120 synthetic packets (mock model, 12 file types) 87.8% of 4,030 fields were accepted and correct, 0 were falsely accepted, every planted problem type was detected; the tool also over-flagged in two classes. This validates the checking layers, not a language model on real documents.
 - E: estimated assisted-to-manual time ratio 0.19 to 0.50 at mid assumptions, but the pessimistic range exceeds 1.0. Not a result.
-- O: real model accuracy, OCR, real documents, real underwriter time, real login, hosting, and any lender's policy.
+- O: real model accuracy, OCR, real documents, real underwriter time, a real identity provider (sign-in itself is built and tested with a stand-in), hosting, and any lender's policy.
 
 ## 2b. How we compare to the leading products (detail: docs/BENCHMARK.md)
 We cannot claim to outperform any incumbent today: no head-to-head test has been run. Incumbents (nCino, Abrigo, Baker Hill, Moody's, Ocrolus) have scale, SBA forms and E-Tran integration, attestations such as SOC 2 Type 2, and years in production; we have none of those. Where our design differs and can be checked: every fact cited to a page and quote, memo figures machine-checked against sources, SOP-section-cited rules, a database-enforced human decision gate, a tamper-evident audit log, and a published evaluation that includes failures. To earn a "better" claim we will pre-register targets and run a blind head-to-head on the same files (BENCHMARK.md section 5), and publish the result either way.
@@ -30,7 +30,7 @@ Value hypotheses, each testable: shorter time to a decision-ready file; fewer mi
 ## 5. Plan (90 days, with decision gates)
 | Phase | Work | Needs from you | Exit gate |
 |---|---|---|---|
-| Days 1-30 | Walk the demo; confirm requirements above; timed baseline of the current manual process on synthetic packets by two underwriters; choose sign-in approach | Sponsor, 2 underwriters for a few hours, answers to section 4 | Written requirements and a measured manual baseline |
+| Days 1-30 | Walk the demo; confirm requirements above; timed baseline of the current manual process on synthetic packets by two underwriters; choose the identity provider (sign-in is built against the open OpenID Connect standard) | Sponsor, 2 underwriters for a few hours, answers to section 4 | Written requirements and a measured manual baseline |
 | Days 31-60 | With approval, connect one real model provider after reviewing its data terms; add OCR; re-run the evaluation and report real numbers including failures | Approval for a vendor account and spend; security contact | Real accuracy report; go/no-go |
 | Days 61-90 | Pilot on redacted, consented historical files with the lender's own policy inputs; underwriters time both flows; external security test and counsel review | Lender partner, legal and compliance reviewers | Measured time and quality comparison; decision to continue |
 

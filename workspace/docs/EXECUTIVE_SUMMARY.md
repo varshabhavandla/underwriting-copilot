@@ -25,7 +25,7 @@ A TypeScript/Next.js/PostgreSQL application that prepares an SBA 7(a) loan file 
 - Debt service coverage covers the new loan only and uses a placeholder 9% rate; eligibility, collateral, tax transcripts, personal financial statements and credit reports are not evaluated. 504 and SBA Express are not encoded.
 
 ## Honest limitations
-Authentication is a local dev identity; rate limiting is per instance; no OCR; no real model; no SAST, signed builds or third-party penetration test; no SOC 2 or vendor review; Vercel fit, data terms and costs are unverified (B-113, B-118). Fair-lending and model-risk positions in docs/FAIR_LENDING_MODEL_RISK.md are engineering analysis, and 19 items need counsel or compliance review (docs/LEGAL_REVIEW.md). No legal advice is given anywhere.
+Sign-in (OpenID Connect, revocable sessions, roles) is built and tested against a fake provider only, with no real provider chosen; rate limiting is per instance; no OCR; no real model; no SAST, signed builds or third-party penetration test; no SOC 2 or vendor review; Vercel fit, data terms and costs are unverified (B-113, B-118). Fair-lending and model-risk positions in docs/FAIR_LENDING_MODEL_RISK.md are engineering analysis, and 19 items need counsel or compliance review (docs/LEGAL_REVIEW.md). No legal advice is given anywhere.
 
 ## Top risks
 1. Wedge unvalidated: no lender has confirmed the pain or the willingness to pilot; nCino and Parlay contest SBA intake (docs/COMPETITIVE_SCAN.md).

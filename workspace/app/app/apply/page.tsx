@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { ZodError } from "zod";
 import { withTenant } from "@/db/client";
 import { submitApplication } from "@/application/submit";
-import { services } from "@/server/services";
+import { requireSession } from "@/server/guard";
 
 export const dynamic = "force-dynamic";
 
@@ -10,8 +10,7 @@ const PURPOSES = ["working_capital", "equipment", "real_estate", "refinance", "c
 
 async function submit(form: FormData): Promise<void> {
   "use server";
-  const s = services();
-  if (!s) redirect("/apply?error=" + encodeURIComponent("Sign-in is not available yet"));
+  const s = await requireSession("intake", "/apply");
   const owners = [1, 2, 3]
     .map((i) => ({ name: String(form.get(`owner${i}Name`) ?? "").trim(), percent: Number(form.get(`owner${i}Percent`) ?? 0) }))
     .filter((o) => o.name !== "" || o.percent > 0);
@@ -39,6 +38,7 @@ async function submit(form: FormData): Promise<void> {
 }
 
 export default async function Apply({ searchParams }: { searchParams: Promise<{ error?: string; submitted?: string }> }) {
+  await requireSession("intake", "/apply");
   const { error, submitted } = await searchParams;
   return (
     <main>

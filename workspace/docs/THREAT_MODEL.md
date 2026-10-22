@@ -11,7 +11,7 @@ Browser/applicant -> Next routes -> Postgres (RLS) | Next routes -> LlmGateway -
 ## STRIDE
 | ID | Threat | Mitigation | Status | Evidence |
 |---|---|---|---|---|
-| S1 | Caller acts as another tenant or user | Tenant and user set per transaction from the server session, never from the request body; forced RLS on every table; `uw_app` is not owner and has no BYPASSRLS | enforced (dev identity from env; real auth is B-117) | test/db/rls.test.ts |
+| S1 | Caller acts as another tenant or user | Identity comes from a server-verified session (OpenID Connect sign-in, opaque revocable token, role and tenant read from our database); tenant and user set per transaction, never from the request body; forced RLS on every table; `uw_app` is not owner and has no BYPASSRLS | enforced; tested against a fake provider only, no real provider chosen (B-117) | test/db/rls.test.ts, test/db/auth.test.ts, scripts/e2e-auth.mjs |
 | S2 | Non-underwriter records a decision | Database gate: only an underwriter acting as themselves | enforced | test/db/review.test.ts |
 | S3 | Forged webhook or replay | HMAC-SHA256, 300 s window, constant-time compare, SSRF checks on targets | enforced | test/unit/servicing.test.ts |
 | T1 | Edit or delete history (decisions, audit, rule runs, memos, outbox) | Append-only triggers, no UPDATE/DELETE policy, hash-chained ledger with `audit_verify_chain()` | enforced | test/db/rls.test.ts, e2e chain check |
@@ -33,8 +33,16 @@ Browser/applicant -> Next routes -> Postgres (RLS) | Next routes -> LlmGateway -
 | E3 | Browser-side attacks (framing, sniffing, injected content) | nosniff, frame-deny, no-referrer, COOP/CORP, HSTS, `default-src 'none'` on API responses, restricted page policy | partial (no nonce-based script policy yet, B-133) | e2e header check |
 | E4 | Vulnerable dependency | `npm audit --omit=dev` in CI at high severity; CycloneDX SBOM artifact | partial (no signing or provenance, B-120) | CI workflow |
 
+| S4 | Forged or substituted ID token (wrong audience, issuer, nonce, algorithm none or HS256, foreign key) | Signature against the provider's published keys, asymmetric algorithm allowlist, issuer, audience, azp, expiry, token age, nonce, optional required amr | enforced | test/unit/auth.test.ts |
+| S5 | Login CSRF or authorization code injection | State bound to an encrypted flow cookie, PKCE S256, nonce, single-use code, exact redirect URI, return paths limited to same-site relative | enforced | auth.test.ts, e2e-auth.mjs |
+| S6 | Stolen or replayed session cookie | 256-bit token, only its hash stored, Secure HttpOnly SameSite=Lax __Host- cookie, idle and absolute timeouts, immediate server-side revocation on logout, user disable and admin revoke | enforced (theft of a live cookie from a compromised browser is not prevented) | test/db/auth.test.ts, e2e-auth.mjs |
+| E5 | Role escalation: a viewer or processor records a decision, an unprovisioned identity gets in | Role per route checked by a policy test, decision gate in the database, identities only via admin-linked pre-provisioning, claims never grant roles | enforced | hardening.test.ts, auth.test.ts, e2e-auth.mjs |
+| E6 | Application role reads or forges sessions and identities | Auth tables unreadable by the application role; only SECURITY DEFINER functions, internal helpers not granted | enforced | test/db/auth.test.ts |
+| R3 | Sign-ins and sign-outs not attributable | Audit events in the tenant ledger for success; reason-coded logs for failures | enforced | e2e-auth.mjs |
+
 ## Residual risks (not mitigated)
-- Real authentication and sessions are not built (B-117); the local dev identity must never be deployed.
+- No real identity provider has been chosen or evaluated (B-117); sign-in is tested with a fake provider. Production refuses to start without OIDC settings or with the development identity.
+- The application server asserts the acting user inside each transaction; a compromised application can act as any user (docs/AUTHENTICATION.md).
 - In-process rate limiting does not hold across serverless instances.
 - Behavior against a real model, real OCR and real documents is unmeasured (B-124).
 - No third-party penetration test, no SAST, no signed builds.

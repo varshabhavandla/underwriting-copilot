@@ -52,3 +52,5 @@ S-49 | https://security.ocrolus.com/ | Ocrolus trust portal | 2026-10-22 | SOC 2
 S-50 | https://raw.githubusercontent.com/OWASP/ASVS/v5.0.0/5.0/docs_en/OWASP_Application_Security_Verification_Standard_5.0.0_en.csv | OWASP ASVS 5.0.0 requirement list | 2026-10-22 | Chapter and level counts V1-V15 (V16 truncated)
 S-51 | https://www.nist.gov/itl/ai-risk-management-framework | NIST AI RMF | 2026-10-22 | Release 2023-01-26, GenAI profile 2024-07-26, under revision
 S-52 | https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.100-1.pdf | NIST AI 100-1, AI Risk Management Framework 1.0 (PDF read locally) | 2026-10-22 | 72 subcategory identifiers in Tables 1-4 (Govern 19, Map 18, Measure 22, Manage 13)
+S-53 | https://openid.net/specs/openid-connect-core-1_0.html | OpenID Connect Core 1.0, section 3.1.3.7 ID Token Validation (first 100,000 of 285,816 characters read) | 2026-10-22 | iss, aud, azp, alg, exp, iat, nonce rules; amr not defined there
+S-54 | https://www.rfc-editor.org/rfc/rfc9700.html | RFC 9700 OAuth 2.0 Security Best Current Practice (first 100,000 of 142,010 characters read) | 2026-10-22 | PKCE S256, exact redirect matching, state/nonce, avoid implicit grant

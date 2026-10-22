@@ -7,6 +7,7 @@ import { ingestDocument } from "@/ingest/ingest";
 import { flagUnreadable } from "@/ingest/unreadable";
 import { objectKey, sha256Hex } from "@/storage/objectStore";
 import { UploadRejected, validateUpload } from "@/storage/validateUpload";
+import { deny } from "@/server/guard";
 import { services } from "@/server/services";
 
 export const dynamic = "force-dynamic";
@@ -18,8 +19,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * routed to manual review because no OCR provider is wired yet.
  */
 export const POST = withRequest("documents", { limit: { max: 30, windowMs: 60_000 } }, async (req: Request, ctx: { params: Promise<{ caseId: string }> }) => {
-  const s = services();
-  if (!s) return Response.json({ error: "unauthenticated" }, { status: 401 });
+  const s = await services();
+  const denied = deny(s, "intake");
+  if (denied) return denied;
+  if (!s) throw new Error("unreachable");
   const { caseId } = await ctx.params;
   if (!UUID.test(caseId)) return Response.json({ error: "not found" }, { status: 404 });
   const form = await req.formData().catch(() => null);

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { withRequest, readJson } from "@/http/withRequest";
 import { inc } from "@/observability/metrics";
 import { ActionDenied, decideCase } from "@/review/actions";
+import { deny } from "@/server/guard";
 import { services } from "@/server/services";
 
 export const dynamic = "force-dynamic";
@@ -10,8 +11,10 @@ const Body = z.object({ decision: z.enum(["approve", "decline", "request_more_in
 
 /** JSON form of the reviewer's decision, same code path as the console. The database decides whether the actor may do this. */
 export const POST = withRequest("decision", { limit: { max: 20, windowMs: 60_000 }, json: true }, async (req: Request, ctx: { params: Promise<{ caseId: string }> }) => {
-  const s = services();
-  if (!s) return Response.json({ error: "unauthenticated" }, { status: 401 });
+  const s = await services();
+  const denied = deny(s, "decide");
+  if (denied) return denied;
+  if (!s) throw new Error("unreachable");
   const { caseId } = await ctx.params;
   if (!UUID.test(caseId)) return Response.json({ error: "not found" }, { status: 404 });
   const raw = await readJson(req, 16 * 1024);

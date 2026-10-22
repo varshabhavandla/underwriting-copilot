@@ -139,3 +139,17 @@ describe("security headers", () => {
     for (const h of ["X-Content-Type-Options", "X-Frame-Options", "Strict-Transport-Security", "Cross-Origin-Opener-Policy", "Content-Security-Policy"]) expect(cfg).toContain(h);
   });
 });
+
+describe("route policy (authentication)", () => {
+  const walk2 = (d: string): string[] => readdirSync(d).flatMap((f) => { const p = join(d, f); return statSync(p).isDirectory() ? walk2(p) : p.endsWith("route.ts") ? [p] : []; });
+  const routes2 = walk2(join(import.meta.dirname, "..", "..", "app", "api"));
+  // routes that are public or authenticate by other means, each with the reason
+  const OTHER = new Map([["health", "public liveness"], ["metrics", "bearer secret"], ["outbox/deliver", "worker secret"], ["auth/login", "starts sign-in"], ["auth/callback", "completes sign-in"], ["auth/logout", "session plus Origin check"]]);
+  it.each(routes2.map((r) => [r.split("/app/api/")[1]!.replace(/\/route\.ts$/, ""), r]))("%s either checks the caller's role or is a documented exception", (name, path) => {
+    const src = readFileSync(path, "utf8");
+    if (OTHER.has(name!)) return;
+    expect(src, `${name} must call services() and deny(...)`).toMatch(/await services\(\)/);
+    expect(src).toMatch(/deny\(s, "(view|intake|build|decide|deliver)"\)/);
+  });
+  it("control: the exceptions are real routes", () => { for (const k of OTHER.keys()) expect(routes2.some((r) => r.includes(`/api/${k}/route.ts`)), k).toBe(true); });
+});

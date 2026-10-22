@@ -32,18 +32,18 @@ Public statements read: Abrigo footer lists SOC 1 Type 2 and SOC 2 Type 2 [V, S-
 | Identifier protection | Encryption methods not stated by Ocrolus | Per-tenant AES-256-GCM field encryption, last four only, redaction before any model call, scrubbed logs [T]; key custody is a local provider, KMS planned, so weaker in custody than a managed service |
 | Prompt-injection handling | Not described in pages read | Document text is data; injection flag blocks auto-acceptance; model has no tools or write path; measured against the mock only [T], untested on a real model |
 | Supply chain | Not described | Dependency audit and SBOM in CI, pattern secret scan; no signing, SAST or provenance |
-| Authentication and sessions | Present in production products | Not built (development identity only). Behind |
+| Authentication and sessions | Present in production products | Built 2026-10-22: OpenID Connect with PKCE, database-enforced revocable sessions, role checks; tested against a fake provider only, no real provider, not independently tested. Closer, still behind |
 | Availability, DR, monitoring, support | Present (Ocrolus lists a 4-hour RTO [V]) | None. Behind |
 
 ## 4. Standards we hold ourselves to (self-assessment, not certification)
-OWASP ASVS 5.0.0 (May 2025) has 17 chapters; the counts we could read for V1 to V15 are 70 level-1, 160 level-2 and 86 level-3 requirements, 316 in total, with V16 (logging) not fully read [V, S-50]. A requirement-level self-assessment now exists (ASVS_SELF_ASSESSMENT.md, 253 level 1 and 2 requirements: 65 met, 41 partial, 2 not met, 89 deferred to authentication and hosting, 55 not applicable, 1 not assessed); the chapter-level view below is the earlier summary.
+OWASP ASVS 5.0.0 (May 2025) has 17 chapters; the counts we could read for V1 to V15 are 70 level-1, 160 level-2 and 86 level-3 requirements, 316 in total, with V16 (logging) not fully read [V, S-50]. A requirement-level self-assessment now exists (ASVS_SELF_ASSESSMENT.md, 253 level 1 and 2 requirements: 100 met, 46 partial, 3 not met, 41 deferred to the identity provider and hosting, 62 not applicable, 1 not assessed, after sign-in was built); the chapter-level view below is the earlier summary.
 | ASVS chapter | Status |
 |---|---|
 | V1 Encoding, V2 Validation and business logic | Partial to strong: parameterized queries, schema validation, business invariants in the database |
 | V3 Web frontend | Partial: baseline headers; no nonce-based script policy yet (B-133) |
 | V4 API | Partial: single wrapper with rate limit, content-type and size guards, generic errors |
 | V5 File handling | Strong for MVP: content-based type check, size cap, encrypted store, hostile files routed to manual review |
-| V6 Authentication, V7 Session, V9 Tokens, V10 OAuth/OIDC | Not built (B-117) |
+| V6 Authentication, V7 Session, V9 Tokens, V10 OAuth/OIDC | Built for sessions, tokens and OIDC client duties; password and recovery rules are delegated to a provider not yet chosen (B-117) |
 | V8 Authorization | Strong at the data layer (row-level security, role gates); depends on real identities |
 | V11 Cryptography | Partial: AES-256-GCM per tenant; key management is a local stand-in |
 | V12 Secure communication, V13 Configuration | Partial: HSTS header, validated environment, no secrets in repo; TLS and hosting settings depend on deployment |
