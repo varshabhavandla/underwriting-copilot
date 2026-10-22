@@ -29,4 +29,4 @@ Labels: [V] verified, [S] secondary, [I] inferred, [A] assumed. Sized for one bu
 NIST SSDF (SP 800-218 v1.1, Feb 2022) is a set of high-level secure development practices to integrate into a lifecycle, not a certification [V, S-31]. We map our controls to it in the compliance roadmap rather than claiming conformance.
 
 ## What is enforced today
-`scripts/verify.sh` and a GitHub Actions workflow running it. Everything else above is planned. No secret scanning, SAST, SBOM or signing is configured yet.
+`scripts/verify.sh` and a GitHub Actions workflow running it. Everything else above is planned. Also enforced as of loop 12: a pattern-based secret scan in `verify`, `npm audit --omit=dev` (high) and a CycloneDX SBOM artifact in CI, security headers, rate limiting and a route policy test (see THREAT_MODEL.md). Not configured: SAST, a full secret scanner (gitleaks), signing or provenance, IaC policy checks.

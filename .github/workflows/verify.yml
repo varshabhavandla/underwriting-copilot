@@ -34,3 +34,9 @@ jobs:
           cache-dependency-path: workspace/app/package-lock.json
       - run: npm ci
       - run: bash scripts/verify.sh
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm run sbom
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: workspace/app/sbom.cdx.json

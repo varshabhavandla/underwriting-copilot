@@ -1,4 +1,6 @@
 import { withTenant } from "@/db/client";
+import { withRequest } from "@/http/withRequest";
+import { inc } from "@/observability/metrics";
 import { addDocument, appendAudit } from "@/db/repo";
 import { DOC_TYPES, type DocType } from "@/extraction/schemas";
 import { ingestDocument } from "@/ingest/ingest";
@@ -15,7 +17,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * signed URL. Content type is decided by content, not by file name. Only text documents are ingested; PDFs and images are stored and
  * routed to manual review because no OCR provider is wired yet.
  */
-export async function POST(req: Request, ctx: { params: Promise<{ caseId: string }> }): Promise<Response> {
+export const POST = withRequest("documents", { limit: { max: 30, windowMs: 60_000 } }, async (req: Request, ctx: { params: Promise<{ caseId: string }> }) => {
   const s = services();
   if (!s) return Response.json({ error: "unauthenticated" }, { status: 401 });
   const { caseId } = await ctx.params;
@@ -57,5 +59,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ caseId: string
   }
   const pages = bytes.toString("utf8").split("\f");
   const r = await ingestDocument(s.sql, s.gateway, new Date(), tctx, { caseId, documentId, docVersion: 1, docType: docType as DocType, pages });
+  inc("documents_total", { ingested: String(!r.skipped) });
   return Response.json({ documentId, ingested: !r.skipped, factsProposed: r.factsProposed, factsAccepted: r.factsAccepted, exceptions: r.exceptions }, { status: r.skipped ? 200 : 201 });
-}
+});

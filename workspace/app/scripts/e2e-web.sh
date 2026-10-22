@@ -16,7 +16,7 @@ expect() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: expected
 SETUP=$(npx tsx scripts/setup-db.ts $DB 2>&1) || { echo "FAIL database setup: $SETUP"; exit 1; }
 T=$(echo "$SETUP" | sed -n 's/^TENANT=//p'); U=$(echo "$SETUP" | sed -n 's/^USER=//p')
 mkdir -p "$WORK/uploads"
-export DATABASE_URL="postgres://uw_app:uw_app_dev@$H:$PORT/$DB" DEV_TENANT_ID=$T DEV_USER_ID=$U UPLOAD_DIR="$WORK/uploads" FIELD_KEY_MASTER=$(openssl rand -base64 32) WORKER_SECRET=$(openssl rand -hex 16)
+export DATABASE_URL="postgres://uw_app:uw_app_dev@$H:$PORT/$DB" DEV_TENANT_ID=$T DEV_USER_ID=$U UPLOAD_DIR="$WORK/uploads" FIELD_KEY_MASTER=$(openssl rand -base64 32) WORKER_SECRET=$(openssl rand -hex 16) METRICS_SECRET=$(openssl rand -hex 16)
 WEB_PORT=${WEB_PORT:-3110}
 node_modules/.bin/next dev -p "$WEB_PORT" > "$WORK/server.log" 2>&1 & SRV=$!
 for _ in $(seq 1 90); do curl -s -o /dev/null "http://127.0.0.1:$WEB_PORT/api/health" && break; sleep 1; done
@@ -30,7 +30,7 @@ CASE=$(echo "$R" | head -1 | sed -E 's/.*"caseId":"([^"]+)".*/\1/')
 R2=$(curl -s -w "\n%{http_code}" -X POST "$B/api/applications" -H "$J" -d "$APP"); expect "same application again -> 200 (idempotent)" 200 "$(echo "$R2" | tail -1)"
 BAD=$(echo "$APP" | sed 's/"percent":40/"percent":30/'); R3=$(curl -s -w "\n%{http_code}" -X POST "$B/api/applications" -H "$J" -d "$BAD")
 expect "owners not 100 percent -> 400" 400 "$(echo "$R3" | tail -1)"; expect "error body does not echo the EIN" 0 "$(echo "$R3" | head -1 | grep -c 12-3456789)"
-expect "invalid json -> 400" 400 "$(code -X POST "$B/api/applications" -d '{nope')"
+expect "invalid json -> 400" 400 "$(code -X POST "$B/api/applications" -H "$J" -d '{nope')"
 expect "oversized body -> 413" 413 "$(head -c 70000 /dev/zero | tr '\0' 'a' | code -X POST "$B/api/applications" -H "$J" --data-binary @-)"
 
 printf 'Net income: $210,000.00\nRevenue: $1,200,000.00\nAs of: 2026-09-30\nTotal assets: $500,000.00\nTotal liabilities: $300,000.00\nTotal equity: $200,000.00\n' > "$WORK/fs.txt"
@@ -84,5 +84,11 @@ expect "missing documents are flagged by rule" 1 "$(psqlx -c "select count(*) fr
 expect "2 stored objects, none readable as plaintext" "2 0" "$(echo "$(find "$WORK/uploads" -type f | wc -l) $(grep -rl 'Net income' "$WORK/uploads" | wc -l)")"
 CH=$(PGPASSWORD=uw_app_dev psql -h "$H" -p "$PORT" -U uw_app -d $DB -tAq -c "select set_config('app.tenant_id','$T',false)" -c "select coalesce(audit_verify_chain()::text,'intact')" | tail -1)
 expect "audit chain verifies" intact "$CH"
+expect "form post to a json route -> 415" 415 "$(code -X POST "$B/api/applications" -d 'a=1')"
+expect "request id echoed" "rid-test-1234" "$(curl -s -D - -o /dev/null "$B/api/health" -H 'x-request-id: rid-test-1234' | tr -d '\r' | awk -F': ' 'tolower($1)=="x-request-id"{print $2}')"
+HDRS=$(curl -s -D - -o /dev/null "$B/api/health" | tr -d '\r' | tr 'A-Z' 'a-z')
+expect "security headers on api" 4 "$(echo "$HDRS" | grep -c -E '^(x-content-type-options: nosniff|x-frame-options: deny|cache-control: no-store|content-security-policy: default-src .none.)')"
+expect "metrics without secret -> 401" 401 "$(code "$B/api/metrics")"
+expect "metrics with secret -> counts requests" yes "$(curl -s "$B/api/metrics" -H "authorization: Bearer $METRICS_SECRET" | grep -q "^http_requests_total" && echo yes)"
 expect "no EIN in server log" 0 "$(grep -c 12-3456789 "$WORK/server.log")"
 [ $FAIL -eq 0 ] && echo "e2e-web: OK" || { echo "e2e-web: FAILED"; exit 1; }

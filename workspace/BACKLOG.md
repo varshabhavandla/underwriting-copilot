@@ -108,3 +108,5 @@ Loop 11 (lender CISO / examiner view), objections and disposition:
 - C-1101 P0: A reader may quote the estimated ratios as a result. Action: labeled ESTIMATED in the report, a "do not quote" line, a test that the report never states a savings percentage, and D-024.
 - C-1102 P1: The mock reads the same label templates the generator prints, so accuracy figures are inflated. Action: stated in the report header; real-provider runs (B-124) on the same harness before any accuracy statement.
 - C-1103 P1: Baseline operator knows the system, biasing the baseline fast. Action: disclosed in the protocol; second operator in B-131.
+- B-133 P2 todo  Nonce-based script CSP for pages via a request proxy; move rate limiting to a shared store or edge before any multi-instance deployment.
+- B-134 P2 todo  Replace the pattern secret scan with gitleaks in CI; add SAST and build provenance.

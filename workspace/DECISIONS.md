@@ -67,3 +67,6 @@ Events go through a database outbox created by a trigger on decisions and guarde
 
 ## D-024 How time-to-decision is reported (2026-10-22)
 The evaluation reports three labeled things: measured pipeline behavior on synthetic data, an ESTIMATED time model built from stated assumptions, and (when someone supplies it) timed human data analyzed by `npm run timing`. The estimated model is never quoted as a result, includes the underwriter's verification burden, and shows a range that can exceed 1.00. The "up to 80 percent" claim in the reference pitch stays an unverified vendor claim.
+
+## D-025 Hardening baseline (2026-10-22)
+Every API route goes through one wrapper (request id, per-client rate limit, content-type and size guards, scrubbed logging, generic errors, metrics), and a policy test fails if a route bypasses it. Rate limiting is in-process for now and is declared partial in THREAT_MODEL.md. Secret scan, audit and SBOM are minimal and labeled as such; full tooling is B-134.

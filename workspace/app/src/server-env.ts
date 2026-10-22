@@ -9,6 +9,8 @@ const Env = z.object({
   UPLOAD_DIR: z.string().min(1).optional(),
   /** Shared secret for the delivery worker route. The route is disabled when unset. */
   WORKER_SECRET: z.string().min(24).optional(),
+  /** Bearer secret for /api/metrics. The route is disabled when unset. */
+  METRICS_SECRET: z.string().min(24).optional(),
   WEBHOOK_URL: z.string().url().optional(),
   WEBHOOK_SECRET: z.string().min(16).optional(),
 });
