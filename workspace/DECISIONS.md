@@ -61,3 +61,6 @@ Rules are deterministic code, read accepted facts only, cite an SOP section and 
 
 ## D-022 Decision gate details (2026-10-22)
 Approving a case that still has open critical or high exceptions requires at least one recorded override explaining why; the database enforces it. A decided case (approved, declined, handed_off) accepts no further decision and no status change except approved to handed_off. Request-more-info moves a case to info_requested and is not final. The console labels facts as extracted and internally consistent, not verified against the source (D-019).
+
+## D-023 Outbox and delivery (2026-10-22)
+Events go through a database outbox created by a trigger on decisions and guarded by row-level security (no event without a matching human decision). Delivery is at least once with leases, exponential backoff and a cap; consumers dedupe on the event id or idempotency key. Webhooks are HMAC-SHA256 signed with a timestamp (300-second window) and refuse non-public targets. Free-text reasons and the full EIN are never sent. Details: docs/SERVICING_ADAPTER.md.

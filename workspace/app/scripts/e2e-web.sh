@@ -16,7 +16,7 @@ expect() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: expected
 SETUP=$(npx tsx scripts/setup-db.ts $DB 2>&1) || { echo "FAIL database setup: $SETUP"; exit 1; }
 T=$(echo "$SETUP" | sed -n 's/^TENANT=//p'); U=$(echo "$SETUP" | sed -n 's/^USER=//p')
 mkdir -p "$WORK/uploads"
-export DATABASE_URL="postgres://uw_app:uw_app_dev@$H:$PORT/$DB" DEV_TENANT_ID=$T DEV_USER_ID=$U UPLOAD_DIR="$WORK/uploads" FIELD_KEY_MASTER=$(openssl rand -base64 32)
+export DATABASE_URL="postgres://uw_app:uw_app_dev@$H:$PORT/$DB" DEV_TENANT_ID=$T DEV_USER_ID=$U UPLOAD_DIR="$WORK/uploads" FIELD_KEY_MASTER=$(openssl rand -base64 32) WORKER_SECRET=$(openssl rand -hex 16)
 WEB_PORT=${WEB_PORT:-3110}
 node_modules/.bin/next dev -p "$WEB_PORT" > "$WORK/server.log" 2>&1 & SRV=$!
 for _ in $(seq 1 90); do curl -s -o /dev/null "http://127.0.0.1:$WEB_PORT/api/health" && break; sleep 1; done
@@ -65,8 +65,15 @@ expect "case still needs_review after the refused approval" needs_review "$(psql
 RD2=$(curl -s -w "\n%{http_code}" -X POST "$B/api/cases/$CASE/decision" -H "$J" -d '{"decision":"approve","reasons":["Reviewed"],"overrides":["Missing statements to be collected before closing"]}')
 expect "approve with a recorded override -> 200" 200 "$(echo "$RD2" | tail -1)"
 expect "second decision on a decided case -> 403" 403 "$(code -X POST "$B/api/cases/$CASE/decision" -H "$J" -d '{"decision":"decline","reasons":["changed mind"]}')"
-expect "case approved only through the decision" approved "$(psqlx -c "select status from cases where id='$CASE'")"
+expect "case approved only through the decision (before delivery)" approved "$(psqlx -c "select status from cases where id='$CASE'")"
 expect "decision recorded as the underwriter, with policy version" "1 sba-7a@SOP 50 10 8.1" "$(psqlx -c "select count(*)||' '||max(policy_version) from decisions where case_id='$CASE'")"
+expect "outbox event queued by the decision" "case.approved pending" "$(psqlx -c "select event_type||' '||status from outbox_events where case_id='$CASE'")"
+expect "delivery route without a secret -> 401" 401 "$(code -X POST "$B/api/outbox/deliver")"
+expect "delivery route with a wrong secret -> 401" 401 "$(code -X POST "$B/api/outbox/deliver" -H "authorization: Bearer $(openssl rand -hex 16)")"
+RDL=$(curl -s -w "\n%{http_code}" -X POST "$B/api/outbox/deliver" -H "authorization: Bearer $WORKER_SECRET"); expect "delivery run -> 200" 200 "$(echo "$RDL" | tail -1)"
+expect "approved case boarded and handed off" "delivered handed_off" "$(psqlx -c "select o.status||' '||c.status from outbox_events o join cases c on c.id=o.case_id where o.case_id='$CASE'")"
+expect "external servicing id recorded" 1 "$(psqlx -c "select count(*) from outbox_events where case_id='$CASE' and external_id like 'LN-%'")"
+expect "a second delivery run delivers nothing" 1 "$(curl -s -X POST "$B/api/outbox/deliver" -H "authorization: Bearer $WORKER_SECRET" | grep -c '"delivered":0')"
 expect "one application stored" 1 "$(psqlx -c "select count(*) from applications")"
 expect "EIN is not plaintext in the database" 0 "$(psqlx -c "select count(*) from applications where encode(ein_ciphertext,'escape') like '%3456789%'")"
 expect "only last4 stored in the clear" 6789 "$(psqlx -c "select ein_last4 from applications")"

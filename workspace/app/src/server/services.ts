@@ -2,6 +2,7 @@ import { LocalKeyProvider, masterKeyFromEnv } from "../crypto/fieldCrypto";
 import { connect, type Sql } from "../db/client";
 import { DEFAULT_OPTIONS, LlmGateway } from "../llm/gateway";
 import { MockProvider } from "../llm/mockProvider";
+import { MockServicingAdapter } from "../servicing/mock";
 import { LocalObjectStore } from "../storage/objectStore";
 import { serverEnv } from "../server-env";
 
@@ -10,6 +11,7 @@ export interface Services {
   keys: LocalKeyProvider;
   store: LocalObjectStore;
   gateway: LlmGateway;
+  servicing: MockServicingAdapter;
   tenantId: string;
   userId: string | undefined;
 }
@@ -28,6 +30,7 @@ export function services(): Services | null {
       keys,
       store: new LocalObjectStore(env.UPLOAD_DIR!, keys),
       gateway: new LlmGateway(new MockProvider("faithful"), DEFAULT_OPTIONS),
+      servicing: new MockServicingAdapter("ok"),
       tenantId: env.DEV_TENANT_ID!,
       userId: env.DEV_USER_ID,
     };

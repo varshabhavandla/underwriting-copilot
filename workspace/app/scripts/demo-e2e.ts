@@ -13,6 +13,8 @@ import { connect, withTenant } from "../src/db/client";
 import { migrate } from "../src/db/migrate";
 import { addDocument, verifyAuditChain } from "../src/db/repo";
 import { adoptMemo, decideCase } from "../src/review/actions";
+import { deliverOutbox } from "../src/servicing/deliver";
+import { MockServicingAdapter } from "../src/servicing/mock";
 import { buildFile } from "../src/file/buildFile";
 import { ingestDocument } from "../src/ingest/ingest";
 import { DEFAULT_OPTIONS, LlmGateway } from "../src/llm/gateway";
@@ -77,6 +79,10 @@ for (const [i, variant] of variants.entries()) {
     approvedOne = true;
   }
 }
+const servicing = new MockServicingAdapter("ok");
+const delivered = await deliverOutbox(app, ctx, { adapter: servicing, now: new Date(Date.now() + 1000) });
+const [handed] = await withTenant(app, ctx, (tx) => tx<{ n: number }[]>`select count(*)::int as n from cases where status = 'handed_off'`);
+console.log(`servicing: delivered=${delivered.delivered} boarded=${servicing.boarded.size} cases handed_off=${handed!.n} (only the one with a recorded approval)`);
 const broken = await withTenant(app, ctx, (tx) => verifyAuditChain(tx));
 const [n] = await withTenant(app, ctx, (tx) => tx<{ n: number }[]>`select count(*)::int as n from audit_events`);
 console.log(`audit events=${n!.n} chain=${broken === null ? "intact" : "BROKEN at " + broken}`);

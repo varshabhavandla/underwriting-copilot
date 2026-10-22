@@ -7,6 +7,10 @@ const Env = z.object({
   DEV_USER_ID: z.string().uuid().optional(),
   FIELD_KEY_MASTER: z.string().min(44).optional(),
   UPLOAD_DIR: z.string().min(1).optional(),
+  /** Shared secret for the delivery worker route. The route is disabled when unset. */
+  WORKER_SECRET: z.string().min(24).optional(),
+  WEBHOOK_URL: z.string().url().optional(),
+  WEBHOOK_SECRET: z.string().min(16).optional(),
 });
 
 export function serverEnv() {
