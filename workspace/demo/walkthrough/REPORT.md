@@ -1,6 +1,6 @@
 # Walkthrough report
 
-Run 2026-10-22T20:53:45.462Z on a fresh local stack (database, fake identity provider, web app). Synthetic data only. Screenshots are in this folder.
+Run 2026-10-22T22:34:21.145Z on a fresh local stack (database, fake identity provider, web app). Synthetic data only. Screenshots are in this folder.
 
 | # | Step | Result |
 |---|---|---|
