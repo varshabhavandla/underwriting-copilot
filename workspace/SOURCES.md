@@ -45,3 +45,9 @@ S-42 | https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-16.xml?part=3
 S-43 | https://www.consumerfinance.gov/rules-policy/regulations/1002/9/ | Reg B 1002.9 | 2026-10-22 | Business credit notification and reasons
 S-44 | https://www.consumerfinance.gov/compliance/guidance/withdrawn-guidance/ | CFPB withdrawn guidance (search result only, page not read) | 2026-10-22 | Circular 2022-03 withdrawal reported
 S-45 | https://www.federalreserve.gov/supervisionreg/srletters/sr2602.htm | SR 26-2 (search result; OCC and FDIC companion numbers from secondary sources) | 2026-10-22 | Companion bulletin numbers unverified
+S-46 | https://www.moodys.com/web/en/us/capabilities/gen-ai/agentic-solutions/credit-memo.html | Moody's agentic credit memo page | 2026-10-22 | Agents, sourcing and review claims; no security or accuracy claims
+S-47 | https://www.abrigo.com/software/lending/sageworks-lending-solution/sba-lending/ | Abrigo SBA lending page | 2026-10-22 | Forms 1919/1920, E-Tran via API, SOC 1/SOC 2 Type 2 footer
+S-48 | search summary: Baker Hill SBA lending and credit memo tools (bakerhill.com page 404 when fetched; Marquette Bank case via retailbankerinternational.com) | 2026-10-22 | SBA 7(a) PLP/Express/CAPLines support; 25 percent claim is vendor-published
+S-49 | https://security.ocrolus.com/ | Ocrolus trust portal | 2026-10-22 | SOC 2 (type not stated), SOC 3, ISO 27001, PCI, VAPT report listed, subprocessors
+S-50 | https://raw.githubusercontent.com/OWASP/ASVS/v5.0.0/5.0/docs_en/OWASP_Application_Security_Verification_Standard_5.0.0_en.csv | OWASP ASVS 5.0.0 requirement list | 2026-10-22 | Chapter and level counts V1-V15 (V16 truncated)
+S-51 | https://www.nist.gov/itl/ai-risk-management-framework | NIST AI RMF | 2026-10-22 | Release 2023-01-26, GenAI profile 2024-07-26, under revision

@@ -11,6 +11,9 @@ Commercial loan files, SBA 7(a) first, take underwriter time on document handlin
 - E: estimated assisted-to-manual time ratio 0.19 to 0.50 at mid assumptions, but the pessimistic range exceeds 1.0. Not a result.
 - O: real model accuracy, OCR, real documents, real underwriter time, real login, hosting, and any lender's policy.
 
+## 2b. How we compare to the leading products (detail: docs/BENCHMARK.md)
+We cannot claim to outperform any incumbent today: no head-to-head test has been run. Incumbents (nCino, Abrigo, Baker Hill, Moody's, Ocrolus) have scale, SBA forms and E-Tran integration, attestations such as SOC 2 Type 2, and years in production; we have none of those. Where our design differs and can be checked: every fact cited to a page and quote, memo figures machine-checked against sources, SOP-section-cited rules, a database-enforced human decision gate, a tamper-evident audit log, and a published evaluation that includes failures. To earn a "better" claim we will pre-register targets and run a blind head-to-head on the same files (BENCHMARK.md section 5), and publish the result either way.
+
 ## 3. How it fits the business (to be confirmed)
 Value hypotheses, each testable: shorter time to a decision-ready file; fewer missed document or consistency problems; a consistent, cited record for audit and exam readiness; faster borrower response. Costs and risks: model and hosting fees (unquantified until a real run), integration effort, third-party risk review by the lender, fair-lending and model-governance review, change management for underwriters.
 

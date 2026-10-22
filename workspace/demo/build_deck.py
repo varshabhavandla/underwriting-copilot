@@ -30,6 +30,14 @@ slide("""<h2>What is measured so far</h2><table><tr><th>Check</th><th>Result</th
 <tr><td>Rule constants vs SBA SOP 50 10 8.1</td><td>Re-checked 2026-10-22</td><td>Verified</td></tr></table>
 <p class=small>The mock model reads printed labels. These results test the checking layers, not a language model on real documents.</p>""")
 
+slide("""<h2>How we compare, honestly</h2><table><tr><th></th><th>Leading products (public claims)</th><th>This tool today</th></tr>
+<tr><td>Scale, integrations, SBA forms and E-Tran</td><td>Yes (nCino, Abrigo, Baker Hill)</td><td><b>Behind</b>: none</td></tr>
+<tr><td>SOC 2 Type 2 / ISO 27001 / pen test</td><td>Listed (Abrigo, Ocrolus)</td><td><b>Behind</b>: none yet</td></tr>
+<tr><td>Fact-level citations and checked memo numbers</td><td>"Clearly sourced" (Moody's); method not described</td><td><b>Built and tested</b></td></tr>
+<tr><td>Human decision enforced by the database</td><td>Not described on pages read</td><td><b>Built and tested</b></td></tr>
+<tr><td>Published accuracy including failures</td><td>Claims without method (e.g. "over 99%")</td><td><b>Published</b>, but synthetic data only</td></tr></table>
+<p class=small>No head-to-head test has been run, so we make no claim to outperform anyone. We will pre-register targets and test on the same files, then publish the result either way.</p>""")
+
 slide("""<h2>What it might be worth</h2><p class=warn>ESTIMATE ONLY. Durations are our guesses, not measurements.</p>
 <ul><li>Modeled assisted-to-manual time ratio: 0.19 to 0.50 at middle assumptions.</li><li>At pessimistic assumptions the ratio exceeds 1.0 (no saving).</li><li>We make no savings claim. The first 30 days measure the real manual baseline with two of your underwriters.</li></ul>""")
 
