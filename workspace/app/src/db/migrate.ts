@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import type { Sql } from "./client.js";
+import type { Sql } from "./client";
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "db", "migrations");
 

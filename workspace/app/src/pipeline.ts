@@ -1,5 +1,5 @@
-import { CHECKLIST_V1, evaluate } from "./policy.js";
-import type { CaseReport, Conflict, Fact, InjectionFlag, Packet } from "./models.js";
+import { CHECKLIST_V1, evaluate } from "./policy";
+import type { CaseReport, Conflict, Fact, InjectionFlag, Packet } from "./models";
 
 /**
  * Weak first layer only: flags instruction-like text found inside documents so

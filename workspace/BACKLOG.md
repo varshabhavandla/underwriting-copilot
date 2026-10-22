@@ -19,7 +19,7 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 ## Phase 3 (in order)
 - B-301 P0 done  Scaffold: TypeScript core, Next.js shell (health, cases page), CI with Postgres service, docker-compose (written, not run here). IaC skeleton deferred to B-122 until D-013/D-014 are decided.
 - B-302 P0 done  Domain model + multi-tenant data layer: migration 0001 (forced RLS, append-only decisions and audit, hash-chained ledger, decision gate), repo layer, 42 tests on real Postgres 16, 4 mutation checks, end-to-end demo.
-- B-303 P0 todo  Borrower application flow (form + upload).
+- B-303 P0 done  Borrower application flow: validated application (SOP ownership total), EIN encrypted per tenant, /apply form and API, upload with content-type checks and encrypted storage. Dev-only tenant source; no auth or rate limiting (C-701).
 - B-304 P0 todo  Document ingestion: extraction/validation with confidence (tax returns, bank statements, financials).
 - B-305 P0 todo  Rules engine + AI agent: completeness, consistency, exceptions, credit memo draft.
 - B-306 P0 todo  Underwriter console with explicit approve/decline/request-info.
@@ -34,6 +34,9 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-121 P1 todo  Primary-source follow-ups: OCC bulletin text for SR 26-2 companion, Federal Register 88 FR 37920 (third-party guidance), 16 CFR 314, AICPA Trust Services Criteria, Reg B text, CFPB circular status.
 - B-122 P1 todo  IaC skeleton (after D-013/D-014); run docker-compose locally; add Postgres roles/RLS test to run against the chosen managed database.
 - B-123 P1 todo  Add to the ledger tests: hash-chain anchoring design, per-tenant sequence gaps under rollbacks (a rolled-back insert leaves no gap because seq is computed inside the transaction), pooler (transaction mode) test.
+- B-124 P0 todo  Real model provider behind the gateway: verify data terms (retention, training, region, SOC report), implement, run eval harness (docs/MEASUREMENT_PLAN.md) and report real numbers. Needs builder approval before any external call.
+- B-125 P0 todo  OCR/PDF text extraction (provider choice D-015) so PDFs and scans are ingested; redaction of names and addresses; persistent token vault.
+- B-126 P1 todo  Rate limiting, authentication and CSRF review on upload and application routes; signed direct-to-storage uploads for production.
 ## Workflow adoption (own design; skills from broomva/skills, MIT)
 - B-401 P1 todo  Root router + scoped instruction files per package; AGENTS.md as the canonical file with CLAUDE.md pointing to it; skills in one canonical dir.
 - B-402 P0 todo  Database-enforced invariants: forced row-level security on every table, no role with BYPASSRLS, append-only hash-chained audit/ledger, provenance required for every fact, one shared write path. Tests that fail if any is weakened.
@@ -71,3 +74,9 @@ Loop 6 (lender CISO / examiner view), objections and disposition:
 - C-601 P0: Tests ran on a locally installed Postgres 16, not the managed database we will use, and the Docker Compose file was not run. Action: B-122 reruns the same suite against the chosen managed Postgres before any real data.
 - C-602 P0: The app role can insert users (admin path) and the dev tenant stand-in is not authentication. Action: D-011/B-117; restrict user provisioning to an admin role and remove DEV_TENANT_ID path once auth exists; guard already fails closed in production.
 - C-603 P1: The hash chain detects tampering by a privileged actor only if someone verifies it and the head is anchored outside the database. Action: B-123 and anchoring in the hardening phase; claim "tamper-evident", not "tamper-proof".
+
+Loop 7 (lender CISO / examiner view), objections and disposition:
+- C-701 P0: Upload and application routes have no authentication, rate limiting or malware scanning, and the tenant is a dev stub. Action: B-126 and D-011 before any exposure; the app refuses to start with the dev stub in production.
+- C-702 P0: Everything is proven with a mock that reads printed labels. Real extraction quality, OCR and redaction effects are unmeasured. Action: B-124/B-125; no accuracy claim until then (MEASUREMENT_PLAN results section says so).
+- C-703 P1: "Accepted" can be misread as "verified true". Action: D-019 wording; the underwriter console (step 6) must label facts as extracted-and-consistent, and show unverified-against-source status.
+- C-704 P1: Redaction covers identifiers but not names or addresses, so a provider would still see them. Action: B-125 and contract terms with the provider.

@@ -99,3 +99,8 @@ Rule packs are versioned by SOP version and effective date; prompts are versione
 - Redaction and injection defenses are not proven. They are measured with the adversarial set, and results go in the evaluation report (B-308).
 - Provider terms (retention, training, region, subprocessors, security reports) are unverified (D-015).
 - Whether a lender will accept AI-prepared analysis is a legal/compliance question (LEGAL_REVIEW 1, 7, 13).
+
+## 9. Implemented so far (loop 7) and what is not
+Built and tested (workspace/app/src/llm, extraction, ingest): gateway as single egress; task and field allowlists; per-case call and token budgets and an input size cap; redaction of SSN, EIN, account and routing numbers, emails and phone numbers with token restore; timeout; strict output schema; citation verification against the original text (page, passage and value must match); deterministic validators (bank arithmetic, balance sheet, stale statement, income reconciliation); injection tripwire that blocks auto-acceptance for the flagged document; audit events with hashes and prompt/model ids.
+Fact acceptance semantics (D-019): "accepted" means the value was faithfully extracted, cited, internally consistent and from an unflagged document. It does NOT mean the value is true. A borrower can print any number. Verifying truth (IRS transcripts, bank data, lender policy) is a separate, later step and stays with the underwriter.
+Not built: a real model provider and its data terms (D-015); OCR or PDF text extraction (PDF and image uploads are stored and routed to manual review); redaction of personal names and addresses; per-tenant persistent token vault; rate limiting and authentication on the upload route; memo drafting; exception disposition by an underwriter.

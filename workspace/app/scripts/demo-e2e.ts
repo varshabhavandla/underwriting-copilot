@@ -6,11 +6,11 @@ import { readFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import postgres from "postgres";
-import { connect, withTenant } from "../src/db/client.js";
-import { migrate } from "../src/db/migrate.js";
-import { addDocument, appendAudit, createCase, proposeFact, recordDecision, setCaseStatus, verifyAuditChain } from "../src/db/repo.js";
-import { processPacket } from "../src/pipeline.js";
-import type { Packet } from "../src/models.js";
+import { connect, withTenant } from "../src/db/client";
+import { migrate } from "../src/db/migrate";
+import { addDocument, appendAudit, createCase, proposeFact, recordDecision, setCaseStatus, verifyAuditChain } from "../src/db/repo";
+import { processPacket } from "../src/pipeline";
+import type { Packet } from "../src/models";
 
 const admin = process.env["UW_TEST_ADMIN_URL"];
 if (!admin) throw new Error("set UW_TEST_ADMIN_URL to a disposable local Postgres");

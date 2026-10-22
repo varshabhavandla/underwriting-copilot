@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import type { Tx } from "./client.js";
+import type { Tx } from "./client";
 
 const CaseInput = z.object({
   caseRef: z.string().min(1).max(200),
@@ -50,13 +50,15 @@ const FactInput = z.object({
     page: z.number().int().positive(),
     passage: z.string().min(1),
   }),
+  evidence: z.record(z.string(), z.unknown()).default({}),
+  evidenceScore: z.number().min(0).max(1).default(0),
 });
 
 export async function proposeFact(tx: Tx, tenantId: string, input: unknown): Promise<string> {
   const f = FactInput.parse(input);
   const [row] = await tx<{ id: string }[]>`
-    insert into facts (tenant_id, case_id, key, value, doc_id, doc_version, page, passage)
-    values (${tenantId}, ${f.caseId}, ${f.key}, ${f.value}, ${f.citation.docId}, ${f.citation.docVersion}, ${f.citation.page}, ${f.citation.passage})
+    insert into facts (tenant_id, case_id, key, value, doc_id, doc_version, page, passage, evidence, evidence_score)
+    values (${tenantId}, ${f.caseId}, ${f.key}, ${f.value}, ${f.citation.docId}, ${f.citation.docVersion}, ${f.citation.page}, ${f.citation.passage}, ${tx.json(f.evidence as never)}, ${f.evidenceScore})
     returning id`;
   return row!.id;
 }
@@ -86,11 +88,12 @@ export async function setCaseStatus(tx: Tx, caseId: string, status: string): Pro
 export async function appendAudit(
   tx: Tx,
   tenantId: string,
-  e: { actorKind: "user" | "agent" | "system"; actorId: string; action: string; subject?: object; inputsRef?: string[]; result?: "ok" | "rejected" | "error" },
+  e: { actorKind: "user" | "agent" | "system"; actorId: string; action: string; subject?: object; inputsRef?: string[]; result?: "ok" | "rejected" | "error"; rule?: object; llm?: object },
 ): Promise<void> {
   await tx`
-    insert into audit_events (tenant_id, seq, prev_hash, hash, at, actor_kind, actor_id, action, subject, inputs_ref, result)
-    values (${tenantId}, 0, '', '', now(), ${e.actorKind}, ${e.actorId}, ${e.action}, ${tx.json((e.subject ?? {}) as never)}, ${e.inputsRef ?? []}, ${e.result ?? "ok"})`;
+    insert into audit_events (tenant_id, seq, prev_hash, hash, at, actor_kind, actor_id, action, subject, inputs_ref, rule, llm, result)
+    values (${tenantId}, 0, '', '', now(), ${e.actorKind}, ${e.actorId}, ${e.action}, ${tx.json((e.subject ?? {}) as never)}, ${e.inputsRef ?? []},
+            ${e.rule ? tx.json(e.rule as never) : null}, ${e.llm ? tx.json(e.llm as never) : null}, ${e.result ?? "ok"})`;
 }
 
 export async function verifyAuditChain(tx: Tx): Promise<number | null> {

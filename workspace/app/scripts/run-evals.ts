@@ -1,8 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { processPacket } from "../src/pipeline.js";
-import type { Packet } from "../src/models.js";
+import { processPacket } from "../src/pipeline";
+import type { Packet } from "../src/models";
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "synthetic");
 

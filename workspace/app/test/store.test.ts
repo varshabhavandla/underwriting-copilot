@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { AccessDenied, CaseStore } from "../src/store.js";
+import { AccessDenied, CaseStore } from "../src/store";
 
 let store: CaseStore;
 let caseId: string;

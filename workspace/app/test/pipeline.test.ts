@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { findConflicts, scanInjection } from "../src/pipeline.js";
-import { CHECKLIST_V1, evaluate } from "../src/policy.js";
-import type { Fact, Packet } from "../src/models.js";
+import { findConflicts, scanInjection } from "../src/pipeline";
+import { CHECKLIST_V1, evaluate } from "../src/policy";
+import type { Fact, Packet } from "../src/models";
 
 const f = (key: string, value: string, docId = "d1"): Fact => ({
   key,

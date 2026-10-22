@@ -1,5 +1,5 @@
-import { formatCents, parseAmountToCents } from "./money.js";
-import type { ChecklistResult, Fact, RuleResult } from "./models.js";
+import { formatCents, parseAmountToCents } from "./money";
+import type { ChecklistResult, Fact, RuleResult } from "./models";
 
 /**
  * PLACEHOLDER rules. The real checklist is derived from SBA SOP 50 10 8.1 and

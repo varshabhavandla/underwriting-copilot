@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
-import { connect, withTenant, type Sql } from "../../src/db/client.js";
-import { addDocument, appendAudit, createCase, proposeFact, recordDecision, setCaseStatus, verifyAuditChain } from "../../src/db/repo.js";
-import { dbEnabled, urls } from "./urls.js";
+import { connect, withTenant, type Sql } from "../../src/db/client";
+import { addDocument, appendAudit, createCase, proposeFact, recordDecision, setCaseStatus, verifyAuditChain } from "../../src/db/repo";
+import { dbEnabled, urls } from "./urls";
 
 const SHA = "a".repeat(64);
 const SHA2 = "b".repeat(64);

@@ -49,3 +49,9 @@ Use SR 26-2 (April 17, 2026) principles, not SR 11-7 (superseded). Our determini
 
 ## D-018 Local development database (2026-10-21)
 Postgres 16 with two roles: uw_owner (owns tables, migrations only) and uw_app (application; not superuser, no BYPASSRLS, owns nothing). Passwords in the repo are local-only. Production database vendor remains open (D-014); the test suite is the acceptance test for any candidate: it must pass unchanged against the candidate.
+
+## D-019 Meaning of an accepted fact (2026-10-22)
+Accepted = faithfully extracted, cited to a passage that exists, valid for its type, consistent under deterministic validators, and from a document with no injection flag. Not "true". Model confidence is recorded for audit and never used. Auto-accept never applies to facts blocked by a validator or from a flagged document.
+
+## D-020 Import style (2026-10-22)
+Relative imports are extensionless (no .js suffix) because Next's Turbopack bundler does not map .js to .ts; TypeScript (Bundler resolution), tsx and Vitest all accept this.

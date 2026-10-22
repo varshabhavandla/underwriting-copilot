@@ -40,3 +40,10 @@ If touch time falls but correction time or missed exceptions rise enough to eras
 
 ## Reporting language rules
 Use the class labels above. Never say "reduces decision time by X percent" for real lenders. Always state N, file class, operator, and that data are synthetic.
+
+## Results so far (loop 7): pipeline checks only, no model quality claim
+`npm run eval:extraction` replays 30 seeded synthetic packets per variant (7 variants) with a mock provider that reads printed labels.
+- Faithful provider: 100 percent field recall and precision, 0 false accepts, every planted defect (arithmetic, balance, staleness, income mismatch, injected instructions) detected as its own exception kind, 0 false positives on clean packets.
+- Provider that invents a value: 81.8 percent recall (the invented field is rejected), 0 false accepts. Some specific defects are missed because the field needed to check them was rejected, but every defective packet still raises an exception (a human would look).
+- Provider that obeys injected instructions: 0 false accepts; fabricated and out-of-schema fields never become facts.
+These numbers show the verification and validator layers work as designed. They say nothing about how a real model will perform; the same harness must be run against a real provider (B-124) before any accuracy statement.

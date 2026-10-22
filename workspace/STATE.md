@@ -14,6 +14,7 @@ Do you accept the default stack in DECISIONS.md D-002/D-003 (Python 3.12 + FastA
 - Existing foundation (stdlib Python: reconcile, versioned checklist, tenancy/idempotency store, synthetic fixtures, 12 tests + 6 fixture cases) moved to app/; verify still passes.
 - Domain decided: commercial lending (SME and SBA). Supersedes the open item in docs/decisions/0002.
 
+- Loop 7: application flow (validated, EIN encrypted per tenant), encrypted upload storage, content-type checks; LLM gateway with redaction, budgets, citation verification; validators; ingestion with evidence scores and exceptions; extraction eval; web end-to-end script (23 checks); 84 tests; mutation checks caught. Skills autonomous/persist read; PROMPT.md restart contract added.
 - Loop 6: migrations and repo layer with forced RLS, decision gate and hash-chained ledger; 42 database tests on real Postgres 16 (4 mutation checks caught); Next.js shell; end-to-end demo; verify.sh now requires a test database.
 - Loop 5: fair lending and model risk (SR 11-7 was superseded by SR 26-2 on 2026-04-17), DevSecOps blueprint, compliance roadmap with questionnaire draft.
 - Loop 4: measurement plan, reference architecture with 6 diagrams, agentic layer (OWASP LLM Top 10 2025 mapping, approval gates, audit event schema). Open decisions D-011, D-013..D-016.
@@ -21,8 +22,8 @@ Do you accept the default stack in DECISIONS.md D-002/D-003 (Python 3.12 + FastA
 - Loop 2.5: ported core to TypeScript (14 tests, 6 fixture cases pass); installed broomva/skills (MIT) under .agents/skills with attribution.
 - Loop 2: SBA process map from SOP 50 10 8.1 primary text (docs/SBA_PROCESS_MAP.md); sources S-1..S-6.
 
-## Next (loop 7)
-Phase 3 step 3: borrower application flow (form, validated input, upload to storage abstraction with a local-disk implementation), then step 4 document ingestion with extraction behind the LLM gateway interface (mock provider first). Builder inputs still pending: B-116 lender conversations, B-117 auth provider, connect the Vercel connector in claude.ai (not connected as of this loop).
+## Next (loop 8)
+Phase 3 step 5: rules engine plus agent that builds the file: completeness and consistency against the SOP rule pack, exception list, and a credit memo draft where every statement cites an accepted fact or a computed value (mock provider; real provider needs approval, B-124). Then step 6 underwriter console with explicit approve/decline/request-more-info. Builder inputs still pending: B-116 lender conversations, B-117 auth provider, connect Vercel connector, approval for a real model provider.
 
 ## Blockers
 None. No paid resources, no outside contact, no real data.

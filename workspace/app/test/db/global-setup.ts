@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import postgres from "postgres";
-import { migrate } from "../../src/db/migrate.js";
-import { dbEnabled, urls } from "./urls.js";
+import { migrate } from "../../src/db/migrate";
+import { dbEnabled, urls } from "./urls";
 
 /** Fresh database every run: roles, then migrations as the owner role. Skipped when no test database is configured. */
 export default async function setup(): Promise<void> {
