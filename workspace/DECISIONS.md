@@ -91,3 +91,6 @@ Rate limiting trusts only the address our own proxy added to X-Forwarded-For (TR
 
 ## D-032 Hosting: options recorded, decision pending (2026-10-22)
 docs/HOSTING_OPTIONS.md compares Vercel with Neon, AWS containers, Google Cloud and a hybrid against what the application needs. Recommendation (not a decision): AWS containers for a lender pilot, because the isolation model, the scanner and key custody then work as built, at a lower floor price; Vercel with Neon only after two cheap tests (role bypass of row-level security, transaction-local settings through the pooler) pass. D-026 (Vercel as the pilot host) is therefore under review. No account has been created and nothing has been bought.
+
+## D-033 Vercel for testing only (2026-10-22)
+The builder chose Vercel for testing. This does not settle the pilot hosting (D-032, B-157). To make a test deployment possible without a writable disk, documents can be stored as encrypted rows (OBJECT_STORE=postgres), and a test deployment may omit the scanner only with an explicit acknowledgment that adds a banner to every page; the production guard otherwise still requires a scanner. The Neon role and pooler questions are turned into a runnable check (npm run db:check) instead of an assumption. Reversal: remove the banner flag and use a managed bucket and scanner; the store sits behind the ObjectStore interface.

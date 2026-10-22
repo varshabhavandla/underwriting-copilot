@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import { decrypt, encrypt, type KeyProvider } from "../crypto/fieldCrypto";
+import { withTenant, type Sql } from "../db/client";
 
 /** Object keys are built only by this function: tenant/case/sha256. No caller-supplied path segments. */
 export function objectKey(tenantId: string, caseId: string, sha256: string, suffix = ""): string {
@@ -38,6 +39,28 @@ export class LocalObjectStore implements ObjectStore {
 
   async get(tenantId: string, key: string): Promise<Buffer> {
     return decrypt(this.keys, tenantId, key, await readFile(this.path(tenantId, key)));
+  }
+}
+
+/**
+ * Database-backed store: encrypted bytes in a row-level-secured, write-once table. For test deployments and small pilots on hosts with no writable disk.
+ * Same contract as the local store, including EEXIST when the key already holds an object.
+ */
+export class PgObjectStore implements ObjectStore {
+  constructor(private readonly sql: Sql, private readonly keys: KeyProvider) {}
+
+  async put(tenantId: string, key: string, bytes: Buffer): Promise<void> {
+    if (!key.startsWith(`${tenantId}/`)) throw new Error("key outside tenant prefix");
+    const blob = await encrypt(this.keys, tenantId, key, bytes);
+    const inserted = await withTenant(this.sql, { tenantId }, (tx) => tx`insert into stored_objects (tenant_id, key, ciphertext) values (${tenantId}, ${key}, ${blob}) on conflict do nothing returning key`);
+    if (inserted.length === 0) throw new Error("EEXIST: object already stored");
+  }
+
+  async get(tenantId: string, key: string): Promise<Buffer> {
+    if (!key.startsWith(`${tenantId}/`)) throw new Error("key outside tenant prefix");
+    const rows = await withTenant(this.sql, { tenantId }, (tx) => tx<{ ciphertext: Buffer }[]>`select ciphertext from stored_objects where key = ${key}`);
+    if (!rows[0]) throw new Error("object not found");
+    return decrypt(this.keys, tenantId, key, rows[0].ciphertext);
   }
 }
 

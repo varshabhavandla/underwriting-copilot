@@ -19,6 +19,15 @@ T=$(echo "$SETUP" | sed -n 's/^TENANT=//p'); U=$(echo "$SETUP" | sed -n 's/^USER
 mkdir -p "$WORK/uploads"
 export DATABASE_URL="postgres://uw_app:uw_app_dev@$H:$PORT/$DB" DEV_TENANT_ID=$T DEV_USER_ID=$U UPLOAD_DIR="$WORK/uploads" FIELD_KEY_MASTER=$(openssl rand -base64 32) WORKER_SECRET=$(openssl rand -hex 16) METRICS_SECRET=$(openssl rand -hex 16)
 WEB_PORT=${WEB_PORT:-3110}
+# E2E_OBJECT_STORE=postgres runs the same checks with documents kept as encrypted database rows instead of files
+if [ "${E2E_OBJECT_STORE:-local}" = postgres ]; then
+  export OBJECT_STORE=postgres
+  objcount() { psqlx -c "select count(*) from stored_objects"; }
+  plaincount() { psqlx -c "select count(*) from stored_objects where encode(ciphertext,'escape') like '%Net income%'"; }
+else
+  objcount() { find "$WORK/uploads" -type f | wc -l | tr -d ' '; }
+  plaincount() { grep -rl 'Net income' "$WORK/uploads" | wc -l | tr -d ' '; }
+fi
 # uploads go through a (fake) ClamAV daemon that recognizes only the EICAR test string
 CLAM_PORT=${CLAM_PORT:-3311}
 setsid npx tsx scripts/fake-clamd.ts "$CLAM_PORT" > "$WORK/clamd.log" 2>&1 & CLAM=$!
@@ -51,16 +60,16 @@ printf '%%PDF-1.7\n1 0 obj<<>>endobj\n' > "$WORK/mismatch.png"; expect "pdf cont
 printf '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>' > "$WORK/x.txt"; expect "svg named .txt -> 415" 415 "$(code -F "file=@$WORK/x.txt" -F docType=financial_statement "$B/api/applications/$CASE/documents")"
 printf '%%PDF-1.7\n1 0 obj<</Type/Catalog/OpenAction<</S/JavaScript/JS(app.alert(1))>>>>endobj\n' > "$WORK/active.pdf"; expect "pdf with javascript -> 415" 415 "$(code -F "file=@$WORK/active.pdf" -F docType=bank_statement "$B/api/applications/$CASE/documents")"
 printf 'Statement text %s\n' 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > "$WORK/eicar.txt"
-OBJ0=$(find "$WORK/uploads" -type f | wc -l)
+OBJ0=$(objcount)
 expect "malware test string -> 422" 422 "$(code -F "file=@$WORK/eicar.txt" -F docType=financial_statement "$B/api/applications/$CASE/documents")"
-expect "infected upload stored nothing" "$OBJ0" "$(find "$WORK/uploads" -type f | wc -l)"
+expect "infected upload stored nothing" "$OBJ0" "$(objcount)"
 expect "and left a rejected audit event" 1 "$(psqlx -c "select count(*) from audit_events where action='document.rejected' and subject->>'reason'='malware'")"
 kill -- -$CLAM 2>/dev/null; sleep 1
 printf 'Statement text two\n' > "$WORK/two.txt"
 HDR=$(curl -s -D - -o /dev/null -F "file=@$WORK/two.txt" -F docType=financial_statement "$B/api/applications/$CASE/documents" | tr -d '\r')
 expect "scanner down -> 503 (fails closed)" 503 "$(echo "$HDR" | head -1 | awk '{print $2}')"
 expect "with a retry hint" 30 "$(echo "$HDR" | awk -F': ' 'tolower($1)=="retry-after"{print $2}')"
-expect "and nothing was stored" "$OBJ0" "$(find "$WORK/uploads" -type f | wc -l)"
+expect "and nothing was stored" "$OBJ0" "$(objcount)"
 expect "bad docType -> 400" 400 "$(code -F "file=@$WORK/fs.txt" -F docType=passport "$B/api/applications/$CASE/documents")"
 expect "apply page renders" 1 "$(curl -s "$B/apply" | grep -c 'Synthetic data only')"
 expect "health ok" 200 "$(code "$B/api/health")"
@@ -102,7 +111,7 @@ expect "6 accepted facts, all cited" 6 "$(psqlx -c "select count(*) from facts w
 expect "manual-review exception for the pdf" 1 "$(psqlx -c "select count(*) from exceptions where case_id='$CASE' and kind='ocr_required'")"
 expect "rule run recorded with 11 results and one verified memo" "1 11 1" "$(psqlx -c "select (select count(*) from rule_runs where case_id='$CASE')||' '||(select count(*) from rule_results where case_id='$CASE')||' '||(select count(*) from memos where case_id='$CASE')")"
 expect "missing documents are flagged by rule" 1 "$(psqlx -c "select count(*) from exceptions where case_id='$CASE' and kind='rule:required-documents'")"
-expect "2 stored objects, none readable as plaintext" "2 0" "$(echo "$(find "$WORK/uploads" -type f | wc -l) $(grep -rl 'Net income' "$WORK/uploads" | wc -l)")"
+expect "2 stored objects, none readable as plaintext" "2 0" "$(echo "$(objcount) $(plaincount)")"
 CH=$(PGPASSWORD=uw_app_dev psql -h "$H" -p "$PORT" -U uw_app -d $DB -tAq -c "select set_config('app.tenant_id','$T',false)" -c "select coalesce(audit_verify_chain()::text,'intact')" | tail -1)
 expect "audit chain verifies" intact "$CH"
 expect "form post to a json route -> 415" 415 "$(code -X POST "$B/api/applications" -d 'a=1')"

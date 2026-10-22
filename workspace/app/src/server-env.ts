@@ -7,6 +7,12 @@ const Env = z.object({
   DEV_USER_ID: z.string().uuid().optional(),
   FIELD_KEY_MASTER: z.string().min(44).optional(),
   UPLOAD_DIR: z.string().min(1).optional(),
+  /** Where uploaded documents are kept: "local" (a directory, UPLOAD_DIR) or "postgres" (encrypted rows; for hosts with no writable disk and small pilots). */
+  OBJECT_STORE: z.enum(["local", "postgres"]).default("local"),
+  /** Connections per process. Use 1 on serverless hosts. */
+  DB_POOL_MAX: z.coerce.number().int().min(1).max(20).default(5),
+  /** Lets a TEST deployment run without a malware scanner. Never a substitute in a pilot with real documents; every page then shows a banner. */
+  ALLOW_UNSCANNED_UPLOADS: z.literal("test-environment-only").optional(),
   /** Shared secret for the delivery worker route. The route is disabled when unset. */
   WORKER_SECRET: z.string().min(24).optional(),
   /** Bearer secret for /api/metrics. The route is disabled when unset. */
@@ -41,7 +47,7 @@ export function serverEnv() {
   if (d.SSO_MODE === "per_tenant" && !d.APP_ORIGIN) throw new Error("APP_ORIGIN is required when SSO_MODE is per_tenant");
   if (process.env["NODE_ENV"] === "production") {
     if (d.DEV_TENANT_ID || d.DEV_USER_ID) throw new Error("DEV_TENANT_ID must not be set in production");
-    if (!d.CLAMD_HOST) throw new Error("CLAMD_HOST is required in production: uploads must be malware-scanned");
+    if (!d.CLAMD_HOST && !d.ALLOW_UNSCANNED_UPLOADS) throw new Error("CLAMD_HOST is required in production: uploads must be malware-scanned (a test deployment may set ALLOW_UNSCANNED_UPLOADS=test-environment-only)");
     if (d.TRUSTED_PROXY_HOPS === undefined) throw new Error("TRUSTED_PROXY_HOPS must be set explicitly in production (1 on Vercel; 0 if there is no proxy, which makes all callers share one rate limit)");
     if (d.SSO_MODE === "per_tenant") {
       if (!d.APP_ORIGIN!.startsWith("https://")) throw new Error("APP_ORIGIN must be https in production");

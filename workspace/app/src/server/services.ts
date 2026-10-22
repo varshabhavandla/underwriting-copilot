@@ -7,14 +7,14 @@ import { connect, withTenant, type Sql } from "../db/client";
 import { DEFAULT_OPTIONS, LlmGateway } from "../llm/gateway";
 import { MockProvider } from "../llm/mockProvider";
 import { MockServicingAdapter } from "../servicing/mock";
-import { LocalObjectStore } from "../storage/objectStore";
+import { LocalObjectStore, PgObjectStore, type ObjectStore } from "../storage/objectStore";
 import { ClamdScanner, NoScanner, type MalwareScanner } from "../storage/scanner";
 import { serverEnv } from "../server-env";
 
 export interface Infra {
   sql: Sql;
   keys: LocalKeyProvider;
-  store: LocalObjectStore;
+  store: ObjectStore;
   gateway: LlmGateway;
   servicing: MockServicingAdapter;
   scanner: MalwareScanner;
@@ -32,13 +32,14 @@ const g = globalThis as unknown as { __uw?: Infra; __uwDevRole?: Role | null };
 /** Wires local-development services. Production replaces the key provider, store and model provider (D-013, D-015). */
 export function infra(): Infra {
   const env = serverEnv();
-  if (!env.UPLOAD_DIR) throw new Error("UPLOAD_DIR is required");
+  if (env.OBJECT_STORE === "local" && !env.UPLOAD_DIR) throw new Error("UPLOAD_DIR is required when OBJECT_STORE is local");
   g.__uw ??= (() => {
     const keys = new LocalKeyProvider(masterKeyFromEnv());
+    const sql = connect(env.DATABASE_URL, env.DB_POOL_MAX);
     return {
-      sql: connect(env.DATABASE_URL),
+      sql,
       keys,
-      store: new LocalObjectStore(env.UPLOAD_DIR!, keys),
+      store: env.OBJECT_STORE === "postgres" ? new PgObjectStore(sql, keys) : new LocalObjectStore(env.UPLOAD_DIR!, keys),
       gateway: new LlmGateway(new MockProvider("faithful"), DEFAULT_OPTIONS),
       servicing: new MockServicingAdapter("ok"),
       scanner: env.CLAMD_HOST ? new ClamdScanner(env.CLAMD_HOST, env.CLAMD_PORT) : new NoScanner(),

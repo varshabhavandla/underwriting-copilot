@@ -132,3 +132,4 @@ Loop 11 (lender CISO / examiner view), objections and disposition:
 - B-155 P1 todo  Run the upload scanner against a real ClamAV daemon: verify reply strings, StreamMaxLength, signature updates and monitoring; decide where it runs (needs hosting decision and possibly cost approval).
 - B-156 P2 todo  Image re-encoding and an isolated, resource-limited worker for PDF parsing and OCR (with B-125).
 - B-157 P0 todo  Builder decision on hosting (docs/HOSTING_OPTIONS.md section 8); then run the section 7 tests (accounts need approval).
+- B-158 P0 todo  Builder runs docs/VERCEL_TEST_DEPLOYMENT.md steps 1 to 7 and reports the db:check output (needs Neon and Vercel accounts and an OIDC provider; Vercel Pro for commercial use).

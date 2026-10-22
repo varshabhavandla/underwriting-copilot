@@ -66,5 +66,8 @@ If you want one choice now: **B, AWS containers**, for the pilot, because it is 
 2. AWS: one RDS instance for a day plus a Fargate task running the database tests and the scanner against a real ClamAV [settles B's open items; a few dollars].
 3. Ask the first lender candidate which clouds and regions their vendor-risk process accepts; this may decide the question before any test.
 
-## 8. Decisions needed from you
+## 8. Update: Vercel for testing
+The builder chose Vercel for testing (D-033). The runbook is docs/VERCEL_TEST_DEPLOYMENT.md, and `npm run db:check` runs the two Neon tests from section 7 against any database URL. The pilot decision above is still open.
+
+## 9. Decisions needed from you
 Which option to plan around (or "wait for the lender"); a monthly budget ceiling; whether you will run the pager yourself; permission to create vendor accounts for the tests in section 7.

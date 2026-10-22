@@ -11,9 +11,9 @@ export interface TenantContext {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export function connect(url: string): Sql {
-  // max: 1 per process is not required; transaction-scoped settings below are pooler-safe.
-  return postgres(url, { onnotice: () => {}, max: 5, idle_timeout: 20 });
+/** `max` is the pool size per process. Serverless hosts should use 1 (each instance holds its own pool, so many instances multiply it). */
+export function connect(url: string, max = 5): Sql {
+  return postgres(url, { onnotice: () => {}, max, idle_timeout: 20 });
 }
 
 /**

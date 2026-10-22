@@ -32,6 +32,16 @@ describe("production configuration guards (V12.3.1, V13.2.3)", () => {
   afterEach(() => { process.env = { ...saved }; });
   const OIDC = { OIDC_ISSUER: "https://idp.example.com", OIDC_CLIENT_ID: "uw", OIDC_CLIENT_SECRET: "x".repeat(24), OIDC_REDIRECT_URI: "https://app.example.com/api/auth/callback" }; // secret-scan:allow (synthetic test value)
   const prod = (url: string, extra: Record<string, string | undefined> = {}) => { process.env = { ...saved, NODE_ENV: "production", DATABASE_URL: url, TRUSTED_PROXY_HOPS: "1", CLAMD_HOST: "scan.internal.example", ...OIDC, ...extra }; if (!("DEV_TENANT_ID" in extra)) delete process.env["DEV_TENANT_ID"]; delete process.env["DEV_USER_ID"]; for (const [k, v] of Object.entries(extra)) if (v === undefined) delete process.env[k]; return () => serverEnv(); };
+  it("a test deployment may run unscanned only with the explicit acknowledgment", () => {
+    expect(prod(GOOD, { CLAMD_HOST: undefined, ALLOW_UNSCANNED_UPLOADS: "test-environment-only" })).not.toThrow();
+    expect(prod(GOOD, { CLAMD_HOST: undefined, ALLOW_UNSCANNED_UPLOADS: "yes" })).toThrow();
+    expect(prod(GOOD, { CLAMD_HOST: undefined, ALLOW_UNSCANNED_UPLOADS: "" })).toThrow();
+  });
+  it("only known object store and pool settings are accepted", () => {
+    expect(prod(GOOD, { OBJECT_STORE: "postgres", DB_POOL_MAX: "1" })).not.toThrow();
+    expect(prod(GOOD, { OBJECT_STORE: "s3" })).toThrow();
+    expect(prod(GOOD, { DB_POOL_MAX: "0" })).toThrow();
+  });
   it("requires a malware scanner in production (V5.4.3)", () => {
     expect(prod(GOOD, { CLAMD_HOST: undefined })).toThrow(/CLAMD_HOST/);
     expect(prod(GOOD, { CLAMD_HOST: "clamd.internal.example", CLAMD_PORT: "3310" })).not.toThrow();

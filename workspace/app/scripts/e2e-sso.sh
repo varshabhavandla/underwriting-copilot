@@ -30,6 +30,7 @@ export DATABASE_URL="postgres://uw_app:uw_app_dev@$HOSTPORT/$DB" UPLOAD_DIR="$WO
 setsid node_modules/.bin/next dev -p "$WEB_PORT" > "$WORK/server.log" 2>&1 & SRV=$!
 for _ in $(seq 1 90); do curl -s -o /dev/null "http://127.0.0.1:$WEB_PORT/api/health" && break; sleep 1; done
 [ -n "${E2E_CURL:-}" ] && { curl -s -i -m 20 "http://127.0.0.1:$WEB_PORT/api/auth/login?org=acme" | head -12 | cut -c1-200; tail -5 "$WORK/server.log" | cut -c1-300; exit 3; }
+SMOKE_ALLOW_HTTP=1 bash scripts/smoke-remote.sh "http://127.0.0.1:$WEB_PORT" || { echo "e2e-sso: FAILED (smoke checks)"; exit 1; }
 E2E_BASE="http://127.0.0.1:$WEB_PORT" E2E_ISSA="$ISSA" E2E_ISSB="$ISSB" E2E_SECRET_A="$SA" E2E_SECRET_B="$SB" E2E_TENANT_A=$(sed -n 's/^TENANT=//p' "$WORK/acme.txt") \
   E2E_DB="$(echo "$UW_TEST_ADMIN_URL" | sed -E "s#/[^/]*\$#/$DB#")" E2E_LOG="$WORK/server.log" node scripts/e2e-sso.mjs
 RC=$?
