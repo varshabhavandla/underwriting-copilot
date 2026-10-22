@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Browser end-to-end check of per-organization single sign-on: two organizations, each with its own (fake) identity provider.
 set -uo pipefail
+cd "$(dirname "$0")/.."; . scripts/lib/killport.sh
 cd "$(dirname "$0")/.."
 if [ -z "${UW_TEST_ADMIN_URL:-}" ]; then echo "e2e-sso: set UW_TEST_ADMIN_URL" >&2; exit 2; fi
 if [ -z "${PW_CHROMIUM:-}" ]; then
@@ -10,7 +11,7 @@ if [ -z "${PW_CHROMIUM:-}" ]; then
     echo "e2e-sso: no Chromium found. Set PW_CHROMIUM=/path/to/chrome, run 'npx playwright-core install chromium', or set UW_ALLOW_NO_BROWSER=1 to skip knowingly." >&2; exit 2
   fi
 fi
-WORK="$(mktemp -d)"; trap 'kill -- -${SRV:-0} -${IDPA:-0} -${IDPB:-0} 2>/dev/null; rm -rf "$WORK"' EXIT
+WORK="$(mktemp -d)"; trap 'for p in ${SRV:-} ${IDPA:-} ${IDPB:-}; do kill -- -$p 2>/dev/null; done; killport "$WEB_PORT" "$PA" "$PB"; rm -rf "$WORK"' EXIT
 PA=${IDP_A_PORT:-4021}; PB=${IDP_B_PORT:-4022}; WEB_PORT=${WEB_SSO_PORT:-3130}
 ISSA="http://127.0.0.1:$PA"; ISSB="http://127.0.0.1:$PB"; SA=$(openssl rand -hex 16); SB=$(openssl rand -hex 16)
 HOSTPORT=$(echo "$UW_TEST_ADMIN_URL" | sed -E 's#^[a-z]+://([^@]*@)?([^/]+)/.*#\2#')

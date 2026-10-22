@@ -31,7 +31,18 @@ describe("production configuration guards (V12.3.1, V13.2.3)", () => {
   const saved = { ...process.env };
   afterEach(() => { process.env = { ...saved }; });
   const OIDC = { OIDC_ISSUER: "https://idp.example.com", OIDC_CLIENT_ID: "uw", OIDC_CLIENT_SECRET: "x".repeat(24), OIDC_REDIRECT_URI: "https://app.example.com/api/auth/callback" }; // secret-scan:allow (synthetic test value)
-  const prod = (url: string, extra: Record<string, string | undefined> = {}) => { process.env = { ...saved, NODE_ENV: "production", DATABASE_URL: url, ...OIDC, ...extra }; if (!("DEV_TENANT_ID" in extra)) delete process.env["DEV_TENANT_ID"]; delete process.env["DEV_USER_ID"]; for (const [k, v] of Object.entries(extra)) if (v === undefined) delete process.env[k]; return () => serverEnv(); };
+  const prod = (url: string, extra: Record<string, string | undefined> = {}) => { process.env = { ...saved, NODE_ENV: "production", DATABASE_URL: url, TRUSTED_PROXY_HOPS: "1", CLAMD_HOST: "scan.internal.example", ...OIDC, ...extra }; if (!("DEV_TENANT_ID" in extra)) delete process.env["DEV_TENANT_ID"]; delete process.env["DEV_USER_ID"]; for (const [k, v] of Object.entries(extra)) if (v === undefined) delete process.env[k]; return () => serverEnv(); };
+  it("requires a malware scanner in production (V5.4.3)", () => {
+    expect(prod(GOOD, { CLAMD_HOST: undefined })).toThrow(/CLAMD_HOST/);
+    expect(prod(GOOD, { CLAMD_HOST: "clamd.internal.example", CLAMD_PORT: "3310" })).not.toThrow();
+    expect(prod(GOOD, { CLAMD_PORT: "0" })).toThrow();
+  });
+  it("requires an explicit proxy trust setting in production (V4.1.3)", () => {
+    expect(prod(GOOD, { TRUSTED_PROXY_HOPS: undefined })).toThrow(/TRUSTED_PROXY_HOPS/);
+    expect(prod(GOOD, { TRUSTED_PROXY_HOPS: "1" })).not.toThrow();
+    expect(prod(GOOD, { TRUSTED_PROXY_HOPS: "0" })).not.toThrow();
+    expect(prod(GOOD, { TRUSTED_PROXY_HOPS: "9" })).toThrow();
+  });
   it("accepts an encrypted connection with a non-development credential", () => expect(prod("postgres://uw_app:Zk3-long-random-value@db.example.com/app?sslmode=require")).not.toThrow()); // secret-scan:allow (synthetic test value)
   it("refuses a connection without sslmode", () => expect(prod("postgres://uw_app:Zk3-long-random-value@db.example.com/app")).toThrow(/sslmode/)); // secret-scan:allow (synthetic test value)
   it("refuses sslmode=disable and prefer", () => { expect(prod("postgres://u:Zk3-long@db.example.com/app?sslmode=disable")).toThrow(/sslmode/); expect(prod("postgres://u:Zk3-long@db.example.com/app?sslmode=prefer")).toThrow(/sslmode/); }); // secret-scan:allow (synthetic test value)

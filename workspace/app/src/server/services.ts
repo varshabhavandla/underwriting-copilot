@@ -8,6 +8,7 @@ import { DEFAULT_OPTIONS, LlmGateway } from "../llm/gateway";
 import { MockProvider } from "../llm/mockProvider";
 import { MockServicingAdapter } from "../servicing/mock";
 import { LocalObjectStore } from "../storage/objectStore";
+import { ClamdScanner, NoScanner, type MalwareScanner } from "../storage/scanner";
 import { serverEnv } from "../server-env";
 
 export interface Infra {
@@ -16,6 +17,7 @@ export interface Infra {
   store: LocalObjectStore;
   gateway: LlmGateway;
   servicing: MockServicingAdapter;
+  scanner: MalwareScanner;
 }
 /** Infrastructure plus the identity of the caller for this request. */
 export interface Services extends Infra {
@@ -39,6 +41,7 @@ export function infra(): Infra {
       store: new LocalObjectStore(env.UPLOAD_DIR!, keys),
       gateway: new LlmGateway(new MockProvider("faithful"), DEFAULT_OPTIONS),
       servicing: new MockServicingAdapter("ok"),
+      scanner: env.CLAMD_HOST ? new ClamdScanner(env.CLAMD_HOST, env.CLAMD_PORT) : new NoScanner(),
     };
   })();
   return g.__uw;

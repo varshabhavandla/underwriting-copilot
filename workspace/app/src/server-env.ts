@@ -23,6 +23,11 @@ const Env = z.object({
   OIDC_REDIRECT_URI: z.string().url().optional(),
   /** Comma-separated authentication methods the ID token must report (amr), for example "mfa". Provider-specific; empty means not enforced here. */
   OIDC_REQUIRED_AMR: z.string().optional(),
+  /** Reverse proxies in front of the app that append to X-Forwarded-For (1 on Vercel). 0 means the header is ignored and all callers share one rate limit. */
+  TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(5).optional(),
+  /** ClamAV daemon that scans every upload before it is stored. Required in production; uploads are refused while it cannot answer. */
+  CLAMD_HOST: z.string().min(1).optional(),
+  CLAMD_PORT: z.coerce.number().int().min(1).max(65535).default(3310),
   SESSION_IDLE_MINUTES: z.coerce.number().int().min(1).max(480).default(30),
   SESSION_ABSOLUTE_HOURS: z.coerce.number().int().min(1).max(72).default(12),
   WEBHOOK_URL: z.string().url().optional(),
@@ -36,6 +41,8 @@ export function serverEnv() {
   if (d.SSO_MODE === "per_tenant" && !d.APP_ORIGIN) throw new Error("APP_ORIGIN is required when SSO_MODE is per_tenant");
   if (process.env["NODE_ENV"] === "production") {
     if (d.DEV_TENANT_ID || d.DEV_USER_ID) throw new Error("DEV_TENANT_ID must not be set in production");
+    if (!d.CLAMD_HOST) throw new Error("CLAMD_HOST is required in production: uploads must be malware-scanned");
+    if (d.TRUSTED_PROXY_HOPS === undefined) throw new Error("TRUSTED_PROXY_HOPS must be set explicitly in production (1 on Vercel; 0 if there is no proxy, which makes all callers share one rate limit)");
     if (d.SSO_MODE === "per_tenant") {
       if (!d.APP_ORIGIN!.startsWith("https://")) throw new Error("APP_ORIGIN must be https in production");
     } else {

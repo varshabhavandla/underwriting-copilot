@@ -184,6 +184,18 @@ s("V1.3.6", P, f"Administrator-supplied provider URLs: https only, public addres
 s("V13.2.4", P, f"Outbound provider calls are restricted to public https hosts ({SS}); no per-organization allowlist and no network-level egress policy yet (B-153)")
 s("V14.2.4", P, "Encryption, logging and access rules defined; provider client secrets are write-only and encrypted under the tenant key; retention not set (LEGAL_REVIEW.md)")
 
+# --- Gap closure 2026-10-22 (B-144, B-146, B-153) ---
+UT = "test/unit/uploads.test.ts"
+s("V4.1.3", M, f"Rate-limit identity is the hops-th entry from the right of X-Forwarded-For, or one shared bucket when no proxy is trusted; TRUSTED_PROXY_HOPS is mandatory in production ({H}, {T}); Vercel overwrites the header (S-55)")
+s("V15.3.4", M, f"Same control: only the address added by our own trusted proxy counts ({H})")
+s("V5.1.1", M, "docs/UPLOADS.md defines types, extensions, size, scanning, storage and serving")
+s("V5.2.2", M, f"File name ending must match the content type detected from the bytes ({UT}, scripts/e2e-web.sh)")
+s("V5.4.3", P, f"Every upload is scanned through the ClamAV protocol before storage and fails closed; production requires CLAMD_HOST ({UT}, e2e-web); tested against a protocol stand-in only, not a real daemon (B-155)")
+s("V1.3.4", M, f"Markup disguised as text (SVG, HTML, script) is refused; active PDFs are refused ({UT})")
+s("V5.4.1 V5.4.2", X, "No download route yet; src/storage/download.ts (attachment, detected content type, sanitized name, nosniff, sandbox) is required for the viewer (B-129) and is tested")
+s("V1.3.6", M, f"Provider and webhook URLs: https only, public addresses, validated at connect time (no rebinding window), no redirects, size and time limits ({SS})")
+s("V13.2.5", D, "Network-level egress allowlist depends on the hosting choice (B-153 remainder)")
+
 src = sys.argv[1]
 rows = [r for r in csv.DictReader(open(src, encoding="utf-8-sig")) if r["L"] in ("1", "2")]
 out = pathlib.Path(__file__).parent

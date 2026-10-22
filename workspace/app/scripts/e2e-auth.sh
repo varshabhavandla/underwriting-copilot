@@ -2,6 +2,7 @@
 # Browser end-to-end check of sign-in, roles, sessions and sign-out against the fake identity provider (development only).
 # Needs: UW_TEST_ADMIN_URL, a Chromium (PW_CHROMIUM=/path/to/chrome, or Playwright's own install), psql not required.
 set -uo pipefail
+cd "$(dirname "$0")/.."; . scripts/lib/killport.sh
 cd "$(dirname "$0")/.."
 if [ -z "${UW_TEST_ADMIN_URL:-}" ]; then echo "e2e-auth: set UW_TEST_ADMIN_URL" >&2; exit 2; fi
 if [ -z "${PW_CHROMIUM:-}" ]; then
@@ -11,7 +12,7 @@ if [ -z "${PW_CHROMIUM:-}" ]; then
     echo "e2e-auth: no Chromium found. Set PW_CHROMIUM=/path/to/chrome, run 'npx playwright-core install chromium', or set UW_ALLOW_NO_BROWSER=1 to skip knowingly." >&2; exit 2
   fi
 fi
-WORK="$(mktemp -d)"; trap 'kill -- -${SRV:-0} -${IDP:-0} 2>/dev/null; rm -rf "$WORK"' EXIT  # servers run in their own process groups so their children die too
+WORK="$(mktemp -d)"; trap 'for p in ${SRV:-} ${IDP:-}; do kill -- -$p 2>/dev/null; done; killport "$WEB_PORT" "$IDP_PORT"; rm -rf "$WORK"' EXIT  # servers run in their own process groups so their children die too
 IDP_PORT=${IDP_PORT:-4010}; WEB_PORT=${WEB_AUTH_PORT:-3120}
 ISS="http://127.0.0.1:$IDP_PORT"; CLIENT=uw-client; SECRET=$(openssl rand -hex 16)
 HOSTPORT=$(echo "$UW_TEST_ADMIN_URL" | sed -E 's#^[a-z]+://([^@]*@)?([^/]+)/.*#\2#')

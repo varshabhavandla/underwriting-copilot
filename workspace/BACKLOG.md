@@ -119,13 +119,15 @@ Loop 11 (lender CISO / examiner view), objections and disposition:
 - B-141 P2 todo  SBA form generation and E-Tran-style export only if lender interviews ask for it.
 - B-142 P1 done (docs/ASVS_SELF_ASSESSMENT.md, requirement level at L2 scope)  Requirement-level ASVS 5.0 self-assessment (L2 target) with evidence per requirement.
 - B-143 P0 todo  Head-to-head protocol with pre-registered targets (BENCHMARK.md section 5); needs lender or vendor access and approval.
-- B-144 P1 todo  Rate-limit client key: trust X-Forwarded-For only behind a proxy that overwrites it (ASVS V4.1.3, V15.3.4); decide the trusted-hop rule with the hosting choice.
+- B-144 P1 done (loop 21)  Rate-limit client key: trust X-Forwarded-For only behind a proxy that overwrites it (ASVS V4.1.3, V15.3.4); decide the trusted-hop rule with the hosting choice.
 - B-145 P2 todo  Read and map NIST AI 600-1 (Generative AI Profile); close the AI RMF gaps listed in NIST_AI_RMF_MAPPING.md.
-- B-146 P1 todo  Upload hardening: malware scanning, extension-versus-content check, serve-as-attachment rule for the viewer (ASVS V5.2.2, V5.4.3).
+- B-146 P1 done (loop 21)  Upload hardening: malware scanning, extension-versus-content check, serve-as-attachment rule for the viewer (ASVS V5.2.2, V5.4.3).
 - B-147 P1 todo  Log shipping and alerting to a separate system; authentication event logging once B-117 lands (ASVS V16.3.1, V16.4.3).
 - B-148 P1 done (admin screens, session screens, security events; loop 19)  Administration screens: users, identity linking, role changes, active sessions with revoke, and a "my sessions" view (ASVS V7.4.5, V7.5.2).
 - B-150 P2 todo  Purge job for expired and revoked sessions.
 - B-151 P2 todo  Check acr and auth_time when the chosen provider supports them (ASVS V6.8.4); consider a CSRF token for state-changing routes (V3.5.1).
 - B-152 P1 done (loop 20; D-030)  Per-tenant identity providers (each lender's own SSO): issuer and client settings per tenant; the identity table already keys on issuer and subject.
-- B-153 P1 todo  Network-level egress restrictions for outbound calls to administrator-supplied URLs (identity providers, webhooks); reuse the public-address guard for webhook delivery.
+- B-153 P1 partial (loop 21: connect-time pinning for providers and webhooks done; network egress policy remains)  Network-level egress restrictions for outbound calls to administrator-supplied URLs (identity providers, webhooks); reuse the public-address guard for webhook delivery.
 - B-154 P2 todo  Support two providers per organization (migrations), and end sessions on issuer change.
+- B-155 P1 todo  Run the upload scanner against a real ClamAV daemon: verify reply strings, StreamMaxLength, signature updates and monitoring; decide where it runs (needs hosting decision and possibly cost approval).
+- B-156 P2 todo  Image re-encoding and an isolated, resource-limited worker for PDF parsing and OCR (with B-125).

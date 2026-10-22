@@ -8,11 +8,11 @@ The assessment is regenerated with `python3 docs/asvs/build_asvs.py <ASVS csv>`;
 ## Summary
 | Chapter | MET | PARTIAL | NOT_MET | DEFERRED | NA | NOT_ASSESSED | Total |
 |---|---|---|---|---|---|---|---|
-| V1 Encoding and Sanitization | 8 | 4 | 0 | 0 | 14 | 1 | 27 |
+| V1 Encoding and Sanitization | 10 | 2 | 0 | 0 | 14 | 1 | 27 |
 | V2 Validation and Business Logic | 5 | 5 | 0 | 0 | 1 | 0 | 11 |
 | V3 Web Frontend Security | 15 | 2 | 0 | 0 | 2 | 0 | 19 |
-| V4 API and Web Service | 1 | 1 | 0 | 2 | 6 | 0 | 10 |
-| V5 File Handling | 3 | 2 | 1 | 0 | 3 | 0 | 9 |
+| V4 API and Web Service | 2 | 0 | 0 | 2 | 6 | 0 | 10 |
+| V5 File Handling | 5 | 1 | 0 | 0 | 3 | 0 | 9 |
 | V6 Authentication | 4 | 2 | 0 | 27 | 2 | 0 | 35 |
 | V7 Session Management | 13 | 3 | 0 | 2 | 0 | 0 | 18 |
 | V8 Authorization | 5 | 2 | 0 | 0 | 0 | 0 | 7 |
@@ -22,19 +22,19 @@ The assessment is regenerated with `python3 docs/asvs/build_asvs.py <ASVS csv>`;
 | V12 Secure Communication | 2 | 0 | 0 | 4 | 3 | 0 | 9 |
 | V13 Configuration | 3 | 4 | 0 | 6 | 0 | 0 | 13 |
 | V14 Data Protection | 6 | 3 | 0 | 0 | 0 | 0 | 9 |
-| V15 Secure Coding and Architecture | 4 | 9 | 0 | 0 | 0 | 0 | 13 |
+| V15 Secure Coding and Architecture | 5 | 8 | 0 | 0 | 0 | 0 | 13 |
 | V16 Security Logging and Error Handling | 10 | 5 | 1 | 0 | 0 | 0 | 16 |
 | V17 WebRTC | 0 | 0 | 0 | 0 | 7 | 0 | 7 |
-| **All** | **102** | **45** | **2** | **41** | **62** | **1** | **253** |
+| **All** | **108** | **40** | **1** | **41** | **62** | **1** | **253** |
 
-Of the 253 requirements, 150 apply to what exists today (not NA, not deferred): 102 are met (68 percent), 45 partial, 2 not met, 1 not assessed. 41 are deferred: about 27 are password, recovery and one-time-code rules that belong to the identity provider and cannot be checked until one is chosen (B-117), and the rest are host-level (TLS termination, HTTP parsing, secret store, deployment settings). 62 are not applicable (for example WebRTC, GraphQL, XML, LDAP, and OAuth authorization-server duties). Before sign-in was built the figures were 65 met, 41 partial, 2 not met and 89 deferred.
+Of the 253 requirements, 150 apply to what exists today (not NA, not deferred): 108 are met (72 percent), 40 partial, 1 not met, 1 not assessed. 41 are deferred: about 27 are password, recovery and one-time-code rules that belong to the identity provider and cannot be checked until one is chosen (B-117), and the rest are host-level (TLS termination, HTTP parsing, secret store, deployment settings). 62 are not applicable (for example WebRTC, GraphQL, XML, LDAP, and OAuth authorization-server duties). Before sign-in was built the figures were 65 met, 41 partial, 2 not met and 89 deferred; after the loop-21 gap closure they are as above.
 
 ## What the assessment found and changed
 1. Fixed (earlier): production could connect to the database without TLS (V12.3.1) and could use the documented local development credentials (V13.2.3). `src/server-env.ts` now refuses both; tests are mutation-checked.
 2. Built: OpenID Connect sign-in with PKCE, state and nonce, strict ID token validation, database-enforced sessions (idle and absolute timeouts, immediate revocation, disabled users cut off), role checks on every route, and Clear-Site-Data on sign-out (docs/AUTHENTICATION.md). Production now refuses to start without it.
 3. Documentation gaps closed: cryptographic inventory, data classification, logging inventory (DATA_PROTECTION.md), remediation time frames (DEVSECOPS.md), access model, authentication design.
-4. Open: the rate limiter keys on the client-supplied X-Forwarded-For header, which is spoofable unless a trusted proxy overwrites it (V4.1.3, V15.3.4), B-144.
-5. Open: no malware scanning of uploads (V5.4.3); file extension is not compared with detected content (V5.2.2); any UTF-8 text upload is accepted, harmless today because files are never served back but a constraint on the source-document viewer (B-129).
+4. Closed (loop 21): the rate limiter no longer trusts the caller's X-Forwarded-For; only the entry added by our own trusted proxy counts, and production must declare how many proxies there are (V4.1.3, V15.3.4, B-144).
+5. Closed (loop 21): uploads must have a file name that matches the detected content, markup disguised as text and active PDFs are refused, and every file is malware-scanned before storage with failure closed (V5.2.2, V1.3.4, V5.4.3, B-146); the scanner is tested against a protocol stand-in, not a real daemon (B-155). Outbound calls to administrator-supplied URLs are pinned to validated addresses (V1.3.6, B-153).
 6. Built (loop 19): administration screens for users, roles, identity linking, session control and security events, and a 'Your sessions' screen (V7.4.5, V7.5.2). User creation and role changes are admin-only database functions that audit themselves; the application role can no longer insert users directly.
 7. Open: no log shipping or alerting (V16.4.3); no CSRF token (V3.5.1); acr and auth_time are not checked (V6.8.4).
 

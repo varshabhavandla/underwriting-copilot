@@ -1,11 +1,13 @@
 import { withTenant } from "@/db/client";
 import { withRequest } from "@/http/withRequest";
+import { log } from "@/observability/log";
 import { inc } from "@/observability/metrics";
 import { addDocument, appendAudit } from "@/db/repo";
 import { DOC_TYPES, type DocType } from "@/extraction/schemas";
 import { ingestDocument } from "@/ingest/ingest";
 import { flagUnreadable } from "@/ingest/unreadable";
 import { objectKey, sha256Hex } from "@/storage/objectStore";
+import { ScanUnavailable } from "@/storage/scanner";
 import { UploadRejected, validateUpload } from "@/storage/validateUpload";
 import { deny } from "@/server/guard";
 import { services } from "@/server/services";
@@ -32,7 +34,7 @@ export const POST = withRequest("documents", { limit: { max: 30, windowMs: 60_00
   const bytes = Buffer.from(await file.arrayBuffer());
   let kind;
   try {
-    kind = validateUpload(bytes);
+    kind = validateUpload(bytes, file.name);
   } catch (e) {
     if (e instanceof UploadRejected) return Response.json({ error: e.message }, { status: 415 });
     throw e;
@@ -41,6 +43,21 @@ export const POST = withRequest("documents", { limit: { max: 30, windowMs: 60_00
   const tctx = { tenantId: s.tenantId, ...(s.userId ? { userId: s.userId } : {}) };
   const exists = await withTenant(s.sql, tctx, (tx) => tx`select 1 from cases where id = ${caseId}`);
   if (exists.length === 0) return Response.json({ error: "not found" }, { status: 404 }); // same answer for missing and foreign cases
+
+  // Malware scan before anything is stored. Fails closed: if the scanner cannot answer, the file is not accepted and the caller may retry.
+  try {
+    const scan = await s.scanner.scan(bytes);
+    if (!scan.clean) {
+      await withTenant(s.sql, tctx, (tx) => appendAudit(tx, s.tenantId, { actorKind: "user", actorId: s.userId ?? "unknown", action: "document.rejected", subject: { caseId, reason: "malware", signature: scan.signature ?? "unknown" }, result: "rejected" }));
+      inc("uploads_rejected_total", { reason: "malware" });
+      return Response.json({ error: "file rejected by the malware scan" }, { status: 422 });
+    }
+  } catch (e) {
+    if (!(e instanceof ScanUnavailable)) throw e;
+    inc("uploads_rejected_total", { reason: "scanner_unavailable" });
+    log("error", "malware scanner unavailable", { error: e });
+    return Response.json({ error: "the upload could not be scanned; try again shortly" }, { status: 503, headers: { "retry-after": "30" } });
+  }
 
   const key = objectKey(s.tenantId, caseId, sha);
   const existing = await withTenant(s.sql, tctx, (tx) => tx<{ id: string }[]>`select id from documents where case_id = ${caseId} and content_sha256 = ${sha}`);

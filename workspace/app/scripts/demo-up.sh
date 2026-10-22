@@ -12,7 +12,7 @@ IDP_PORT=${IDP_PORT:-4010}; ISS="http://127.0.0.1:$IDP_PORT"; SECRET=$(openssl r
 npx tsx scripts/seed-staff.ts uw_demo "$ISS" >/dev/null
 mkdir -p .demo-uploads
 # Sign-in uses the local fake identity provider (development only): pick Admin, Processor, Underwriter or Viewer on its page.
-trap 'kill -- -${IDP:-0} 2>/dev/null' EXIT
+trap '[ -n "${IDP:-}" ] && kill -- -$IDP 2>/dev/null' EXIT
 setsid npx tsx scripts/fake-idp.ts "$IDP_PORT" uw-client "$SECRET" "http://127.0.0.1:$PORT_WEB/api/auth/callback" sub-admin:Admin sub-processor:Processor sub-underwriter:Underwriter sub-viewer:Viewer > /dev/null 2>&1 & IDP=$!
 export DATABASE_URL="postgres://uw_app:uw_app_dev@$HP/uw_demo" UPLOAD_DIR="$PWD/.demo-uploads" FIELD_KEY_MASTER=$(openssl rand -base64 32) WORKER_SECRET=demo-worker-secret-0123456789abcdef \
   OIDC_ISSUER="$ISS" OIDC_CLIENT_ID=uw-client OIDC_CLIENT_SECRET="$SECRET" OIDC_REDIRECT_URI="http://127.0.0.1:$PORT_WEB/api/auth/callback"

@@ -1,3 +1,4 @@
+import { guardedFetch } from "../auth/safeFetch";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 export const SIGNATURE_HEADER = "x-uw-signature";
@@ -44,8 +45,8 @@ export async function postWebhook(target: WebhookTarget, event: { id: string; ty
   const url = assertSafeWebhookUrl(target.url, { allowLocal: target.allowLocal ?? false });
   const body = JSON.stringify(event);
   try {
-    const res = await fetch(url, {
-      method: "POST", body, signal, redirect: "error",
+    const res = await guardedFetch(url.toString(), {
+      method: "POST", body, signal,
       headers: { "content-type": "application/json", [EVENT_ID_HEADER]: event.id, [SIGNATURE_HEADER]: sign(target.secret, body, Math.floor(now() / 1000)) },
     });
     if (res.ok) return { ok: true, retryable: false };

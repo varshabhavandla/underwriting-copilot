@@ -1,8 +1,8 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { RateLimiter } from "../../src/http/rateLimit";
-import { readJson, withRequest } from "../../src/http/withRequest";
+import { clientKeyOf, readJson, withRequest } from "../../src/http/withRequest";
 import { log, scrub, setLevel, setSink } from "../../src/observability/log";
 import { inc, render, reset } from "../../src/observability/metrics";
 import { scanText } from "../../scripts/secret-scan";
@@ -50,7 +50,8 @@ describe("rate limiter", () => {
 });
 
 describe("withRequest", () => {
-  beforeEach(() => reset());
+  beforeEach(() => { reset(); process.env["TRUSTED_PROXY_HOPS"] = "1"; });
+  afterAll(() => { delete process.env["TRUSTED_PROXY_HOPS"]; });
   const req = (init: RequestInit & { ip?: string } = {}) => new Request("http://x/api/t", { method: "POST", ...init, headers: { "x-forwarded-for": init.ip ?? "1.2.3.4", ...(init.headers as Record<string, string>) } });
   it("echoes a valid request id, replaces an invalid one, and counts the request", async () => {
     const h = withRequest("t1", { limit: { max: 100, windowMs: 1000 } }, async () => Response.json({ ok: true }));
@@ -167,4 +168,42 @@ describe("page policy (authentication)", () => {
     for (const p of pages.filter((x) => x.includes("/admin/"))) expect(readFileSync(p, "utf8")).toMatch(/requireSession\("admin"/);
   });
   it("control: the public page list names a real page", () => { for (const k of PUBLIC.keys()) expect(pages.some((p) => p.includes(`/app/${k}/page.tsx`)), k).toBe(true); });
+});
+
+describe("client identity for rate limiting (ASVS V4.1.3, V15.3.4)", () => {
+  const req = (xff?: string) => new Request("http://x/", { headers: xff === undefined ? {} : { "x-forwarded-for": xff } });
+  it("ignores X-Forwarded-For entirely when no proxy is trusted: a caller cannot choose their own identity", () => {
+    expect(clientKeyOf(req("203.0.113.9"), 0)).toBe("unknown");
+    expect(clientKeyOf(req("1.1.1.1, 2.2.2.2"), 0)).toBe("unknown");
+    expect(clientKeyOf(req(), 0)).toBe("unknown");
+  });
+  it("with one trusted proxy, takes the last entry (the one the proxy added), whatever the caller wrote before it", () => {
+    expect(clientKeyOf(req("198.51.100.7"), 1)).toBe("198.51.100.7");
+    expect(clientKeyOf(req("6.6.6.6, 7.7.7.7, 198.51.100.7"), 1)).toBe("198.51.100.7");
+  });
+  it("spoofing the left side does not change the identity or evade the limit", () => {
+    expect(clientKeyOf(req("1.2.3.4, 198.51.100.7"), 1)).toBe(clientKeyOf(req("9.9.9.9, 198.51.100.7"), 1));
+  });
+  it("with two trusted hops, takes the second from the right", () => {
+    expect(clientKeyOf(req("6.6.6.6, 198.51.100.7, 10.0.0.2"), 2)).toBe("198.51.100.7");
+  });
+  it("falls back to the shared bucket when the list is shorter than the trusted hops, empty, or not an address", () => {
+    expect(clientKeyOf(req("198.51.100.7"), 2)).toBe("unknown");
+    expect(clientKeyOf(req(), 1)).toBe("unknown");
+    expect(clientKeyOf(req("not-an-ip"), 1)).toBe("unknown");
+    expect(clientKeyOf(req("1.2.3.4, <script>"), 1)).toBe("unknown");
+  });
+  it("accepts IPv6 and rejects an oversized or malformed one", () => {
+    expect(clientKeyOf(req("2001:db8::1"), 1)).toBe("2001:db8::1");
+    expect(clientKeyOf(req("2001:db8::1::2"), 1)).toBe("unknown");
+  });
+  it("the hop count comes from TRUSTED_PROXY_HOPS and defaults to untrusted", () => {
+    const saved = process.env["TRUSTED_PROXY_HOPS"];
+    try {
+      delete process.env["TRUSTED_PROXY_HOPS"]; expect(clientKeyOf(req("198.51.100.7"))).toBe("unknown");
+      process.env["TRUSTED_PROXY_HOPS"] = "1"; expect(clientKeyOf(req("198.51.100.7"))).toBe("198.51.100.7");
+      process.env["TRUSTED_PROXY_HOPS"] = "banana"; expect(clientKeyOf(req("198.51.100.7"))).toBe("unknown");
+      process.env["TRUSTED_PROXY_HOPS"] = "99"; expect(clientKeyOf(req("198.51.100.7"))).toBe("unknown");
+    } finally { if (saved === undefined) delete process.env["TRUSTED_PROXY_HOPS"]; else process.env["TRUSTED_PROXY_HOPS"] = saved; }
+  });
 });

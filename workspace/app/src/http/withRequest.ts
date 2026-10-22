@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isIP } from "node:net";
 import { log } from "../observability/log";
 import { inc } from "../observability/metrics";
 import { RateLimiter } from "./rateLimit";
@@ -14,9 +15,23 @@ export interface RouteOptions {
 const limiters = new Map<string, RateLimiter>();
 const ID = /^[A-Za-z0-9_-]{8,64}$/;
 
-export const clientKeyOf = (req: Request): string => {
-  const fwd = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return fwd && /^[0-9a-fA-F:.]{3,45}$/.test(fwd) ? fwd : "unknown";
+/** How many reverse proxies sit in front of the app and append to X-Forwarded-For. 0 means the header cannot be trusted at all. */
+export const trustedProxyHops = (): number => {
+  const n = Number(process.env["TRUSTED_PROXY_HOPS"] ?? 0);
+  return Number.isInteger(n) && n >= 0 && n <= 5 ? n : 0;
+};
+
+/**
+ * The rate-limit identity of a caller. X-Forwarded-For is a list that every proxy appends to, and a caller can write anything into the part it
+ * controls, so only the entry added by our own outermost trusted proxy counts: the hops-th entry from the right. With no trusted proxy (hops 0) or
+ * a list shorter than that, every caller shares one bucket: the limit then protects the service without trying to tell callers apart, rather than
+ * letting an attacker choose their own identity. On Vercel the platform overwrites the header with the client's address, so one hop (S-55).
+ */
+export const clientKeyOf = (req: Request, hops: number = trustedProxyHops()): string => {
+  if (hops <= 0) return "unknown";
+  const parts = (req.headers.get("x-forwarded-for") ?? "").split(",").map((p) => p.trim()).filter(Boolean);
+  const ip = parts.length >= hops ? parts[parts.length - hops] : undefined;
+  return ip && isIP(ip) ? ip : "unknown";
 };
 
 /**

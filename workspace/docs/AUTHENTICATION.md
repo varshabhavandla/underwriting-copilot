@@ -44,7 +44,7 @@ Authorization code with PKCE and exact redirect matching; asymmetric ID token si
 
 ## Residual risks
 - The application server is trusted to assert the acting user inside a transaction; a compromised application can act as any user. Database role separation limits what it can do (no direct access to sessions or identities) but not this.
-- A malicious or compromised organization administrator can point their own organization at a provider they control; that affects only their own organization (identities, sessions and settings are organization-scoped), but it means the organization's admins are trusted with its sign-in. Provider URLs are checked against private addresses when used, yet DNS can change between check and request (rebinding): production also needs network-level egress restrictions (B-153).
+- A malicious or compromised organization administrator can point their own organization at a provider they control; that affects only their own organization (identities, sessions and settings are organization-scoped), but it means the organization's admins are trusted with its sign-in. Provider URLs are checked against private addresses when used, and the connection itself is pinned to the validated addresses, so DNS rebinding cannot redirect it; network-level egress restrictions are still advised as defense in depth (B-153).
 - Authorization codes appear in the callback URL and may be logged by the platform; they are single-use, PKCE-bound and short-lived.
 - No purge job for expired and revoked sessions (B-150); no bulk user import or SCIM deprovisioning; the administration screens have had no usability review.
 - `amr` semantics differ by provider; MFA enforcement through it is only as good as the provider's reporting.

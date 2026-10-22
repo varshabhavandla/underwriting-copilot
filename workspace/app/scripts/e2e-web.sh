@@ -2,9 +2,10 @@
 # End-to-end check of the running web app against a fresh local database. Exits non-zero on the first mismatch.
 # Needs: UW_TEST_ADMIN_URL (disposable Postgres superuser), psql, curl, openssl.
 set -uo pipefail
+cd "$(dirname "$0")/.."; . scripts/lib/killport.sh
 cd "$(dirname "$0")/.."
 : "${UW_TEST_ADMIN_URL:?set UW_TEST_ADMIN_URL}"
-WORK="$(mktemp -d)"; trap 'kill ${SRV:-0} 2>/dev/null; rm -rf "$WORK"' EXIT
+WORK="$(mktemp -d)"; trap '[ -n "${SRV:-}" ] && kill -- -$SRV 2>/dev/null; [ -n "${CLAM:-}" ] && kill -- -$CLAM 2>/dev/null; killport "$WEB_PORT" "${CLAM_PORT:-}"; rm -rf "$WORK"' EXIT
 HOSTPORT=$(echo "$UW_TEST_ADMIN_URL" | sed -E 's#^[a-z]+://([^@]*@)?([^/]+)/.*#\2#'); H=${HOSTPORT%:*}; PORT=${HOSTPORT#*:}
 ADMIN_USER=$(echo "$UW_TEST_ADMIN_URL" | sed -E 's#^[a-z]+://([^:@/]+).*#\1#')
 if echo "$UW_TEST_ADMIN_URL" | grep -qE '^[a-z]+://[^:@/]+:[^@]+@'; then export PGPASSWORD=$(echo "$UW_TEST_ADMIN_URL" | sed -E 's#^[a-z]+://[^:@/]+:([^@]*)@.*#\1#'); fi
@@ -18,7 +19,12 @@ T=$(echo "$SETUP" | sed -n 's/^TENANT=//p'); U=$(echo "$SETUP" | sed -n 's/^USER
 mkdir -p "$WORK/uploads"
 export DATABASE_URL="postgres://uw_app:uw_app_dev@$H:$PORT/$DB" DEV_TENANT_ID=$T DEV_USER_ID=$U UPLOAD_DIR="$WORK/uploads" FIELD_KEY_MASTER=$(openssl rand -base64 32) WORKER_SECRET=$(openssl rand -hex 16) METRICS_SECRET=$(openssl rand -hex 16)
 WEB_PORT=${WEB_PORT:-3110}
-node_modules/.bin/next dev -p "$WEB_PORT" > "$WORK/server.log" 2>&1 & SRV=$!
+# uploads go through a (fake) ClamAV daemon that recognizes only the EICAR test string
+CLAM_PORT=${CLAM_PORT:-3311}
+setsid npx tsx scripts/fake-clamd.ts "$CLAM_PORT" > "$WORK/clamd.log" 2>&1 & CLAM=$!
+for _ in $(seq 1 30); do grep -q "fake clamd" "$WORK/clamd.log" && break; sleep 1; done
+export CLAMD_HOST=127.0.0.1 CLAMD_PORT=$CLAM_PORT TRUSTED_PROXY_HOPS=0
+setsid node_modules/.bin/next dev -p "$WEB_PORT" > "$WORK/server.log" 2>&1 & SRV=$!
 for _ in $(seq 1 90); do curl -s -o /dev/null "http://127.0.0.1:$WEB_PORT/api/health" && break; sleep 1; done
 B="http://127.0.0.1:$WEB_PORT"
 code() { curl -s -o /dev/null -w "%{http_code}" "$@"; }
@@ -40,6 +46,21 @@ expect "same file again -> 200 and skipped" 200 "$(code -F "file=@$WORK/fs.txt" 
 printf 'MZ\x90\x00\x03\x00\x00\x00' > "$WORK/evil.pdf"; expect "executable named .pdf -> 415" 415 "$(code -F "file=@$WORK/evil.pdf" -F docType=bank_statement "$B/api/applications/$CASE/documents")"
 printf '%%PDF-1.7\n1 0 obj<<>>endobj\n' > "$WORK/real.pdf"; expect "real pdf -> 202 manual review" 202 "$(code -F "file=@$WORK/real.pdf" -F docType=bank_statement "$B/api/applications/$CASE/documents")"
 expect "unknown case -> 404" 404 "$(code -F "file=@$WORK/fs.txt" -F docType=financial_statement "$B/api/applications/00000000-0000-4000-8000-000000000000/documents")"
+# upload hardening: name must match content, no markup, no active PDF, malware scan, fail closed
+printf '%%PDF-1.7\n1 0 obj<<>>endobj\n' > "$WORK/mismatch.png"; expect "pdf content named .png -> 415" 415 "$(code -F "file=@$WORK/mismatch.png" -F docType=bank_statement "$B/api/applications/$CASE/documents")"
+printf '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>' > "$WORK/x.txt"; expect "svg named .txt -> 415" 415 "$(code -F "file=@$WORK/x.txt" -F docType=financial_statement "$B/api/applications/$CASE/documents")"
+printf '%%PDF-1.7\n1 0 obj<</Type/Catalog/OpenAction<</S/JavaScript/JS(app.alert(1))>>>>endobj\n' > "$WORK/active.pdf"; expect "pdf with javascript -> 415" 415 "$(code -F "file=@$WORK/active.pdf" -F docType=bank_statement "$B/api/applications/$CASE/documents")"
+printf 'Statement text %s\n' 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > "$WORK/eicar.txt"
+OBJ0=$(find "$WORK/uploads" -type f | wc -l)
+expect "malware test string -> 422" 422 "$(code -F "file=@$WORK/eicar.txt" -F docType=financial_statement "$B/api/applications/$CASE/documents")"
+expect "infected upload stored nothing" "$OBJ0" "$(find "$WORK/uploads" -type f | wc -l)"
+expect "and left a rejected audit event" 1 "$(psqlx -c "select count(*) from audit_events where action='document.rejected' and subject->>'reason'='malware'")"
+kill -- -$CLAM 2>/dev/null; sleep 1
+printf 'Statement text two\n' > "$WORK/two.txt"
+HDR=$(curl -s -D - -o /dev/null -F "file=@$WORK/two.txt" -F docType=financial_statement "$B/api/applications/$CASE/documents" | tr -d '\r')
+expect "scanner down -> 503 (fails closed)" 503 "$(echo "$HDR" | head -1 | awk '{print $2}')"
+expect "with a retry hint" 30 "$(echo "$HDR" | awk -F': ' 'tolower($1)=="retry-after"{print $2}')"
+expect "and nothing was stored" "$OBJ0" "$(find "$WORK/uploads" -type f | wc -l)"
 expect "bad docType -> 400" 400 "$(code -F "file=@$WORK/fs.txt" -F docType=passport "$B/api/applications/$CASE/documents")"
 expect "apply page renders" 1 "$(curl -s "$B/apply" | grep -c 'Synthetic data only')"
 expect "health ok" 200 "$(code "$B/api/health")"

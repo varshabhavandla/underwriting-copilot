@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
-import { assertPublicHttps, fetchPublic, isNonPublicAddress, UnsafeUrl } from "../../src/auth/safeFetch";
+import { assertPublicHttps, fetchPublic, guardedFetch, guardedLookup, isNonPublicAddress, UnsafeUrl } from "../../src/auth/safeFetch";
 import { clearDiscoveryCache, clearKeyCache, discover, exchangeCode, authorizationUrl, keysFor, pkce, verifyIdToken, type OidcConfig } from "../../src/auth/oidc";
 import { isSlug } from "../../src/admin/../auth/idp";
 import { issuerAllowed } from "../../src/admin/sso";
@@ -101,5 +101,32 @@ describe("organization names and issuers", () => {
     for (const bad of ["http://login.example.com", "javascript:alert(1)", "https://", "login.example.com", "https://a b.example"]) expect(issuerAllowed(bad, true), bad).toBe(false);
     expect(issuerAllowed("http://127.0.0.1:4000", false)).toBe(true);
     expect(issuerAllowed("http://127.0.0.1:4000", true)).toBe(false);
+  });
+});
+
+describe("connection-time address pinning (DNS rebinding, B-153)", () => {
+  type Cb = (e: Error | null, a?: unknown, f?: number) => void;
+  const call = (l: ReturnType<typeof guardedLookup>, host: string, opts?: { all?: boolean }) => new Promise<{ err: Error | null; addr?: unknown }>((r) => l(host, opts, ((err: Error | null, addr: unknown) => r({ err, addr })) as Cb));
+  it("hands back only the addresses it validated, in both call styles", async () => {
+    const l = guardedLookup(async () => ["93.184.216.34", "2606:4700:4700::1111"]);
+    expect((await call(l, "x.example", { all: true })).addr).toEqual([{ address: "93.184.216.34", family: 4 }, { address: "2606:4700:4700::1111", family: 6 }]);
+    expect((await call(l, "x.example")).addr).toBe("93.184.216.34");
+  });
+  it("refuses a name that resolves to anything non-public, even among public answers", async () => {
+    for (const answers of [["127.0.0.1"], ["93.184.216.34", "10.0.0.1"], ["169.254.169.254"], ["::1"], []]) {
+      const r = await call(guardedLookup(async () => answers), "x.example", { all: true });
+      expect(r.err, JSON.stringify(answers)).toBeInstanceOf(UnsafeUrl);
+    }
+  });
+  it("passes resolver failures through", async () => expect((await call(guardedLookup(async () => { throw new Error("ENOTFOUND"); }), "x.example")).err?.message).toBe("ENOTFOUND"));
+  it("a name that is public when checked but private when connected is refused at connect time", async () => {
+    let calls = 0;
+    const rebinding = async () => (++calls === 1 ? ["93.184.216.34"] : ["127.0.0.1"]);
+    const err = await guardedFetch("https://rebind.example/hook", {}, { resolve: rebinding }).then(() => null, (e: Error & { cause?: Error }) => e);
+    expect(err).not.toBeNull();
+    const text = `${err!.message} ${(err as { cause?: Error }).cause?.message ?? ""}`;
+    expect(text).toMatch(/non-public/);
+    expect(text).not.toMatch(/ECONNREFUSED|ETIMEDOUT/); // it never tried to connect
+    expect(calls).toBeGreaterThanOrEqual(2);
   });
 });

@@ -2,10 +2,12 @@
  * Outbound requests to identity providers whose addresses a tenant administrator typed in. The server must not be talked into reaching
  * internal services (cloud metadata, private networks): https only, no credentials in the URL, every resolved address must be public,
  * no redirects, a response size cap and a timeout. Loopback http is allowed only outside production, for the local fake provider.
- * Residual risk: DNS can change between this check and the request (rebinding); production must also restrict egress at the network level (B-153).
+ * DNS rebinding is closed: the address the connection uses is validated at connect time by the connection's own lookup, so the name cannot resolve to
+ * something different between a check and the request. Production should still restrict egress at the network level as defense in depth (B-153).
  */
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { Agent, fetch as undiciFetch } from "undici";
 
 export class UnsafeUrl extends Error {}
 
@@ -33,10 +35,44 @@ export async function assertPublicHttps(raw: string, resolve: (host: string) => 
   return u;
 }
 
+type Resolver = (host: string) => Promise<string[]>;
+const defaultResolve: Resolver = async (h) => (await lookup(h, { all: true })).map((a) => a.address);
+
+type LookupCallback = (err: Error | null, address?: string | { address: string; family: number }[], family?: number) => void;
+/**
+ * The lookup the HTTP connection itself uses. It refuses a name that resolves to anything non-public, and hands back exactly the addresses it validated,
+ * so the connection can only go where the check said it could (no second resolution, no rebinding window).
+ */
+export function guardedLookup(resolve: Resolver = defaultResolve) {
+  return (hostname: string, options: { all?: boolean | undefined } | undefined, cb: LookupCallback): void => {
+    resolve(hostname).then((addrs) => {
+      if (addrs.length === 0 || addrs.some(isNonPublicAddress)) return cb(new UnsafeUrl("host resolves to a non-public address"));
+      if (options?.all) return cb(null, addrs.map((a) => ({ address: a, family: isIP(a) })));
+      cb(null, addrs[0]!, isIP(addrs[0]!));
+    }, (e: Error) => cb(e));
+  };
+}
+let sharedAgent: Agent | undefined;
+const agentFor = (resolve?: Resolver): Agent => resolve ? new Agent({ connect: { lookup: guardedLookup(resolve) as never } }) : (sharedAgent ??= new Agent({ connect: { lookup: guardedLookup() as never } }));
+
+/**
+ * A fetch that can only reach public https hosts: the URL is checked, then the connection is pinned to validated addresses. Loopback http is permitted
+ * outside production (local fake providers) and goes through the plain client.
+ */
+export async function guardedFetch(raw: string, init: RequestInit = {}, o: { resolve?: Resolver } = {}): Promise<Response> {
+  const u = await assertPublicHttps(raw, o.resolve);
+  if (u.protocol === "http:") return fetch(u, { ...init, redirect: "error" });
+  const agent = agentFor(o.resolve);
+  try {
+    return (await undiciFetch(u, { ...(init as object), redirect: "error", dispatcher: agent } as never)) as unknown as Response;
+  } finally {
+    if (o.resolve) void agent.close(); // per-call agents exist only when a test injects a resolver
+  }
+}
+
 export interface Fetched { status: number; ok: boolean; text: string; json(): unknown }
 export async function fetchPublic(raw: string, init: RequestInit = {}, o: { maxBytes?: number; timeoutMs?: number; resolve?: (h: string) => Promise<string[]> } = {}): Promise<Fetched> {
-  const u = await assertPublicHttps(raw, o.resolve);
-  const res = await fetch(u, { ...init, redirect: "error", signal: AbortSignal.timeout(o.timeoutMs ?? 5000) });
+  const res = await guardedFetch(raw, { ...init, signal: AbortSignal.timeout(o.timeoutMs ?? 5000) }, o.resolve ? { resolve: o.resolve } : {});
   const max = o.maxBytes ?? 262_144;
   const reader = res.body?.getReader();
   const chunks: Uint8Array[] = [];
