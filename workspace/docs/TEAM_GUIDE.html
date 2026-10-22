@@ -1,0 +1,267 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Underwriting copilot team guide</title><style>:root{--bg:#fff;--fg:#18212b;--line:#dde2e8;--mut:#5b6672;--acc:#1f5eff}@media(prefers-color-scheme:dark){:root{--bg:#12161b;--fg:#e6eaee;--line:#2c353f;--mut:#9aa5b1;--acc:#6e97ff}}
+body{font:16px/1.6 system-ui,sans-serif;margin:0;background:var(--bg);color:var(--fg)}main{max-width:900px;margin:0 auto;padding:24px 16px}h1{font-size:28px}h2{font-size:22px;margin-top:2em;border-bottom:1px solid var(--line);padding-bottom:4px}h3{font-size:18px}
+table{border-collapse:collapse;width:100%;font-size:14px;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top}th{color:var(--mut)}code{background:rgba(127,127,127,.15);padding:1px 5px;border-radius:4px;font-size:90%}a{color:var(--acc)}</style><main><h1>Underwriting copilot: team guide</h1>
+<p>Purpose of this document: explain to the team what we are building and why, what works today, what does not, and how to demo it. Written 2026-10-22. Claims are labeled <strong>[measured]</strong> (we ran it), <strong>[verified]</strong> (from a cited source in SOURCES.md), <strong>[inferred]</strong> (our reasoning), <strong>[assumed]</strong> (we have not checked) or <strong>[not done]</strong>. Nothing here is legal advice.</p>
+<h2>1. In one paragraph</h2>
+<p>We are building software that prepares commercial loan files, starting with SBA 7(a), so that an underwriter spends time on the credit decision instead of on collecting documents, keying numbers and writing the first draft of the memo. The software reads the application and documents, records where every number came from, runs the SBA rules, flags problems, and drafts a cited memo. <strong>A human underwriter makes every credit decision. The software never approves, declines or ranks a borrower.</strong> This is a hard design constraint, enforced in the database, not only on screen.</p>
+<h2>2. The problem</h2>
+<p>A small-business loan file is a stack of documents: tax returns, bank statements, financial statements, ownership details, the request. Before an underwriter can judge the credit, someone must read them, key the figures into a spreadsheet, cross-check them (do the statements add up? are they recent? do ownership percentages total 100?), apply the program's rules, and write the memo. That preparation sits before the judgment call and consumes much of the time. Errors in it are costly, and a missed document or a mistyped number can reach the decision unnoticed.</p>
+<p><strong>Hypothesis [assumed]:</strong> if the file arrives prepared, with every figure linked to its source and problems flagged, underwriters spend less time per file and miss fewer problems. <strong>We have not measured this on real files.</strong> Proving it is the main goal of the next phase (section 9).</p>
+<h2>3. What we are trying to accomplish</h2>
+<ol>
+<li><strong>A working tool a lender could pilot.</strong> Intake through decision handoff, with an audit trail.</li>
+<li><strong>Trust by design.</strong> Human decides, every fact cited, lender data isolated, everything auditable, document text never obeyed as instructions.</li>
+<li><strong>Evidence over claims.</strong> We publish what we measured, including failures, label everything, and make no claim to outperform any vendor without a head-to-head test.</li>
+<li><strong>A path to a pilot.</strong> Know exactly what a lender will ask for (security evidence, vendor risk review, counsel review) and what we still owe them.</li>
+</ol>
+<p>Not goals: automated credit decisions, borrower scoring or ranking, replacing underwriters, a loan origination system, or SBA form generation.</p>
+<h2>4. Who uses it</h2>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>What they do</th>
+<th>What they cannot do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Processor</td>
+<td>Enter the application, upload documents, build the file</td>
+<td>Record a decision (the request is refused)</td>
+</tr>
+<tr>
+<td>Underwriter</td>
+<td>Review the file, check facts against their sources, dispose exceptions, adopt or edit the memo, decide</td>
+<td>Administer users</td>
+</tr>
+<tr>
+<td>Viewer</td>
+<td>Read files</td>
+<td>Change anything; sees no decision form</td>
+</tr>
+<tr>
+<td>Admin</td>
+<td>Create users, set roles, link identities, view sessions and security events, configure the lender's own sign-in provider</td>
+<td>Record a decision</td>
+</tr>
+</tbody>
+</table>
+<p>Roles are stored in our database, not taken from the sign-in provider, so a provider cannot grant itself underwriter rights.</p>
+<h2>5. How it works, step by step</h2>
+<ol>
+<li><strong>Intake.</strong> A processor submits the application form. Business name, request (amount, term, use of proceeds), owners and their percentages. The tax ID (EIN) is encrypted with a per-lender key; only the last four digits are ever shown.</li>
+<li><strong>Documents.</strong> The processor uploads tax returns, bank statements and financial statements (PDF, PNG, JPEG, or plain text up to 4 MB). Before a file is kept, it is checked: the name must match the content, markup and active PDFs are refused, and a malware scan must pass. If the scanner cannot be reached, the upload is refused, not accepted. Documents are stored encrypted.</li>
+<li><strong>Extraction with citations.</strong> Facts (revenue, balances, dates) are read from the documents through a single model gateway. Each fact must carry a citation: document, page, quoted passage. A fact whose citation cannot be found in the source text is rejected. "Accepted" means faithfully extracted from the document, <strong>not</strong> verified true in the real world. Model-stated confidence never decides acceptance.</li>
+<li><strong>Safety around documents.</strong> Identifiers are redacted before any model call. Document text is data, never instructions: if a document contains instruction-like text, the tool flags it as a critical exception and holds that document's facts for a human.</li>
+<li><strong>Rules.</strong> Eleven deterministic rules for SBA SOP 50 10 version 8.1 run over accepted facts, each citing its SOP section (list in docs/RULE_PACK.md). A rule that cannot be evaluated never passes; it returns needs-review. Seven always apply; four are conditional.</li>
+<li>Always: loan amount limit, guaranty percentage, ownership totals 100 percent, required documents present, financial statements within 120 days, debt service coverage (new loan only, indicative), maturity limit.</li>
+<li>Conditional: start-up equity, refinance requirements, change of ownership, working-capital justification.</li>
+<li><strong>Exceptions.</strong> Problems become exceptions with a severity (critical, high, other): missing documents, statements that do not add up, stale documents, instruction-like text in documents.</li>
+<li><strong>Memo draft.</strong> A credit memo is drafted. Every line is cited and every number is checked against the cited source. The memo cannot contain approve or decline language. It lists the items the tool did not evaluate.</li>
+<li><strong>Human decision.</strong> The underwriter reads the file, adopts the memo, disposes each exception with a note, and records approve, decline or return. Database rules enforce:</li>
+<li>only an underwriter can decide;</li>
+<li>approving while a critical or high exception is open needs a written override explaining why;</li>
+<li>a decided case is final;</li>
+<li>decisions are append-only and record who, when, the policy version, reasons and any override.</li>
+<li><strong>Handoff.</strong> After an approval, a signed, retried outbox sends an event to a <strong>mock</strong> lender servicing adapter behind a clean interface. There is no real bank integration.</li>
+<li><strong>Audit.</strong> Every step is written to a hash-chained, append-only ledger. The database can verify that no past record was altered.</li>
+</ol>
+<h2>6. What it is built from</h2>
+<ul>
+<li><strong>Stack:</strong> TypeScript (strict), Node 22, Next.js 16 and React 19 for screens and API, PostgreSQL 16, Vitest for tests, zod for validation, jose for token checks.</li>
+<li><strong>Isolation [measured by tests]:</strong> every table has a tenant id and forced row-level security. The application's database role is not an owner and has no bypass. Tenant and user are set per transaction. Decisions, audit events and memos are append-only.</li>
+<li><strong>Sign-in:</strong> OpenID Connect (authorization code with PKCE, strict token validation), opaque server-side sessions (30 minutes idle, 12 hours absolute, revocable at once). A lender can have its own identity provider, configured by its admin, with the client secret stored encrypted and write-only.</li>
+<li><strong>Request hardening:</strong> rate limits, JSON-only writes, scrubbed logs, security headers, safe outbound fetching (public addresses only, no redirects), production start-up guards that refuse unsafe settings.</li>
+<li><strong>Main tables:</strong> tenants, users, cases, applications, documents, facts, exceptions, rule runs and results, memos and adoptions, decisions, audit events, outbox events, stored objects, and an auth schema (identities, sessions, per-tenant providers).</li>
+<li><strong>Screens:</strong> <code>/apply</code>, <code>/review</code> (queue), <code>/review/&lt;case&gt;</code> (file, documents, memo, decision), <code>/admin</code> (users, SSO, security events), <code>/account</code> (own sessions), plus sign-in and signed-out pages.</li>
+<li>Architecture detail: docs/ARCHITECTURE.md. Threat model: docs/THREAT_MODEL.md.</li>
+</ul>
+<h2>7. Where we are</h2>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Intake, upload, extraction, rules, exceptions, memo, decision gate, handoff, audit</td>
+<td>Built and tested on synthetic data</td>
+</tr>
+<tr>
+<td>Sign-in, roles, admin screens, per-lender sign-in</td>
+<td>Built; tested with a stand-in identity provider only</td>
+</tr>
+<tr>
+<td>Browser walkthrough of the whole workflow</td>
+<td>40 of 40 steps pass, in verify and CI [measured]</td>
+</tr>
+<tr>
+<td>Automated tests</td>
+<td>454 pass, including real-database tests [measured]</td>
+</tr>
+<tr>
+<td>Real model provider</td>
+<td><strong>Not done.</strong> A stand-in model that reads printed labels is used (B-124)</td>
+</tr>
+<tr>
+<td>OCR for scans and images</td>
+<td><strong>Not done.</strong> Image-only files route to manual reading (B-125)</td>
+</tr>
+<tr>
+<td>Real identity provider chosen</td>
+<td><strong>Not done</strong> (B-117)</td>
+</tr>
+<tr>
+<td>Hosting</td>
+<td><strong>Not decided.</strong> Options compared in docs/HOSTING_OPTIONS.md; test deployment prepared (B-157, B-158)</td>
+</tr>
+<tr>
+<td>Real lender conversations</td>
+<td><strong>Not done</strong> (B-116)</td>
+</tr>
+<tr>
+<td>Third-party security test, SOC 2, lender vendor review</td>
+<td><strong>Not done</strong></td>
+</tr>
+<tr>
+<td>Counsel review of legal items</td>
+<td><strong>Not done</strong> (docs/LEGAL_REVIEW.md)</td>
+</tr>
+</tbody>
+</table>
+<h2>8. Evidence so far</h2>
+<ul>
+<li><strong>Extraction on synthetic packets [measured, stand-in model]:</strong> 120 packets, 12 file types, 4,030 fields: 87.8% accepted and correct, <strong>0 falsely accepted</strong>, 3.7% held for a human, 8.4% not extracted (image-only files with no OCR). Because the model reads printed labels from the same templates, this tests the checking layers, not a language model on real paper.</li>
+<li><strong>Planted problems [measured]:</strong> every planted problem class was caught in 100% of packets; two classes also over-flagged (reported, not hidden).</li>
+<li><strong>Rule constants [verified]:</strong> re-checked against SOP 50 10 8.1 on 2026-10-22.</li>
+<li><strong>OWASP ASVS 5.0.0 levels 1 and 2 [self-assessed]:</strong> 253 requirements: 108 met, 40 partial, 1 not met, 41 deferred, 62 not applicable, 1 not assessed; 72 percent of the 150 that apply are met (docs/ASVS_SELF_ASSESSMENT.md).</li>
+<li><strong>NIST AI RMF [self-assessed]:</strong> 72 subcategories: 9 addressed, 40 partial, 22 gaps, 1 not applicable (docs/NIST_AI_RMF_MAPPING.md).</li>
+<li><strong>Time savings [not measured]:</strong> the modeled ratio (0.19 to 0.50 at middle assumptions, above 1.0 at pessimistic ones) is a guess from assumed durations. Do not quote it as a result. A timed baseline with two underwriters (B-131) is how we get a real number.</li>
+</ul>
+<h2>9. What the software does not do yet</h2>
+<p>Eligibility screening (size standard, ineligible types, affiliation), IRS tax transcripts, personal financial statements and credit reports, collateral and appraisals, existing business debt and global cash flow, franchise and insurance items, the interest rate cap check. Debt service uses only the new loan and a placeholder 9 percent rate. The 504 program and SBA Express are not encoded. The full list is printed with every file run.</p>
+<h2>10. Context: competitors and our position [inferred, sources in docs/COMPETITIVE_SCAN.md and docs/BENCHMARK.md]</h2>
+<p>Large platforms (nCino, Abrigo, Baker Hill) have scale, integrations and SBA forms that we do not. Several vendors state security certifications we do not have yet. What we have built and tested: fact-level citations with checked memo numbers, and a human-only decision enforced by the database. We have not run a head-to-head test, so we make no claim to outperform anyone. The provisional wedge (a standalone SBA file-preparation workspace) rests partly on absence of evidence about competitors and needs lender conversations to confirm.</p>
+<h2>11. Plan</h2>
+<ul>
+<li><strong>Days 1 to 30:</strong> lender and processor conversations (B-116); timed manual baseline with two underwriters (B-131); choose identity provider (B-117); decide hosting (B-157).</li>
+<li><strong>Days 31 to 60:</strong> with approval, one real model provider after reviewing its data terms (B-124); OCR (B-125); rerun the evaluation and publish real numbers including failures.</li>
+<li><strong>Days 61 to 90:</strong> replace placeholder policy inputs with a partner's; add the debt schedule; external penetration test; counsel review; pilot on redacted, consented historical files; time both flows.</li>
+<li><strong>Stop conditions:</strong> a figure reaches a decision unflagged and wrong; it does not beat the baseline; a vendor or regulatory requirement cannot be met.</li>
+</ul>
+<h2>12. Decisions we need from the team</h2>
+<ol>
+<li>Which lending lines and volumes first, and what outcome defines success?</li>
+<li>Who can arrange lender conversations and two underwriters for the timed baseline?</li>
+<li>Hosting for a pilot (recommendation: AWS containers; Vercel for testing only) and who approves vendor risk.</li>
+<li>Which model provider to evaluate, and approval to make external calls with synthetic data first.</li>
+<li>Which identity provider.</li>
+<li>Who reviews the rules against SOP 50 10 and the legal list.</li>
+</ol>
+<h2>13. Demo guide (about 15 minutes)</h2>
+<h3>Setup</h3>
+<p>From a clone of the repository, in <code>workspace/app</code>: <code>npm ci</code>, point <code>UW_TEST_ADMIN_URL</code> at a disposable local Postgres superuser, then <code>bash scripts/demo-up.sh</code>. Open <code>http://127.0.0.1:3000/review</code>. You land on a stand-in sign-in page: choose a role. Use a private window per role. Keep the terminal open. Stop with Ctrl-C; rerunning rebuilds a synthetic database. If you cannot run it live, use demo/walkthrough/WALKTHROUGH.html (20-step narrated page) or demo/deck.html.</p>
+<h3>Say first</h3>
+<p>All data is synthetic. The model is a stand-in. The tool prepares files; a human underwriter decides.</p>
+<h3>Script</h3>
+<table>
+<thead>
+<tr>
+<th>Minutes</th>
+<th>Do</th>
+<th>Say</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Sign in as Underwriter</td>
+<td>Roles come from our database. Sessions can be revoked. Every sign-in is audited.</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Open the queue</td>
+<td>Prepared files with open exceptions by severity. Every status is needs review; the software never approves.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Open a flagged file</td>
+<td>One critical exception: a document contained instruction-like text. The tool held those facts for a human and did not obey it.</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Scroll to rule results</td>
+<td>Eleven SBA rules, each with its SOP section. Failures and unknowns go to a person. The tool lists what it did not evaluate.</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Scroll to facts</td>
+<td>Every figure has a page and a quoted passage. "Accepted" means faithfully extracted, not verified true.</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Scroll to the memo</td>
+<td>Every line is cited and numbers are checked against the source. The memo cannot say approve or decline.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Try Approve with a reason only, then add a written override</td>
+<td>The first attempt is refused because a critical exception is open. With the override it is recorded. The database enforces this.</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Show the audit trail and the handed-off file</td>
+<td>Append-only, hash-chained. Only an approved file went to the mock servicing system.</td>
+</tr>
+<tr>
+<td>3</td>
+<td>New window as Processor: apply at <code>/apply</code>, open the case, upload documents, click Build the file</td>
+<td>Intake to prepared file in a few clicks. The tax ID shows only its last four digits. A processor who tries to decide is refused.</td>
+</tr>
+<tr>
+<td>1</td>
+<td>New window as Admin: open Admin</td>
+<td>Users, roles, sessions, security events. An admin cannot demote or disable themselves.</td>
+</tr>
+</tbody>
+</table>
+<p>For the processor step, synthetic packets for the walkthrough are generated by <code>app/scripts/walkthrough-packets.ts</code>; <code>npm run walkthrough</code> plays the whole flow automatically and writes screenshots.</p>
+<h3>Rough edges to say before they are noticed</h3>
+<p>Coverage ratios look high because synthetic financials are generous. Debt service uses only the new loan and a placeholder 9 percent rate. The sign-in provider is a local stand-in. The stand-in model reads printed labels, so accuracy figures do not predict real-document accuracy. Image-only files are routed to manual reading because OCR is not built.</p>
+<h2>14. Questions the team may ask</h2>
+<ul>
+<li><strong>Does it make credit decisions?</strong> No. Only an underwriter records a decision; the database refuses anything else.</li>
+<li><strong>Can it be wrong?</strong> Yes. Facts are faithfully extracted, not verified true; the underwriter checks each against its source passage. We measured 0 false accepts on synthetic data with a stand-in model; real documents are untested.</li>
+<li><strong>Where does the data go?</strong> Locally, nowhere. With a real model provider, identifiers are redacted first, and we review the provider's retention, training and region terms before any external call.</li>
+<li><strong>What stops one lender seeing another's data?</strong> Row-level security enforced by the database, tested with positive controls.</li>
+<li><strong>What about prompt injection?</strong> Document text is data. Instruction-like text raises a critical exception and holds that document's facts.</li>
+<li><strong>Is it compliant?</strong> We have not claimed compliance. We map our controls to ASVS and NIST AI RMF as self-assessments, and we keep a list of items for counsel and compliance.</li>
+<li><strong>How much time does it save?</strong> Unknown. We need a timed baseline.</li>
+<li><strong>Why not buy an existing platform?</strong> Larger platforms cover more; we have not compared head to head. Our wedge needs lender validation.</li>
+<li><strong>What would a pilot need?</strong> A real model provider and OCR, an identity provider, hosting decision, lender policy inputs, security testing, counsel review.</li>
+</ul>
+<h2>15. Glossary</h2>
+<ul>
+<li><strong>SBA 7(a):</strong> the Small Business Administration's main guaranteed loan program.</li>
+<li><strong>SOP 50 10:</strong> SBA's standard operating procedure for lenders; we use version 8.1.</li>
+<li><strong>EIN:</strong> employer identification number, the business tax ID.</li>
+<li><strong>Exception:</strong> a flagged problem on a file, with a severity.</li>
+<li><strong>Override:</strong> a written reason recorded when approving past an open critical or high exception.</li>
+<li><strong>Row-level security:</strong> database rules that restrict each query to one lender's rows.</li>
+<li><strong>OIDC:</strong> OpenID Connect, the standard for signing in through a company's identity provider.</li>
+<li><strong>Prompt injection:</strong> text in a document that tries to give instructions to an AI.</li>
+<li><strong>Citation:</strong> document, page and quoted passage attached to every extracted fact.</li>
+<li><strong>Tenant:</strong> one lender organization using the system.</li>
+</ul>
+<h2>16. Where everything is</h2>
+<ul>
+<li>State and plans: STATE.md, BACKLOG.md, DECISIONS.md (D-001 to D-035), ASSUMPTIONS.md, SOURCES.md.</li>
+<li>Design: docs/ARCHITECTURE.md, THREAT_MODEL.md, AUTHENTICATION.md, UPLOADS.md, DATA_PROTECTION.md, RULE_PACK.md, SBA_PROCESS_MAP.md, SERVICING_ADAPTER.md.</li>
+<li>Evidence: reports/EVALUATION_REPORT.md, docs/ASVS_SELF_ASSESSMENT.md, NIST_AI_RMF_MAPPING.md, BENCHMARK.md, MEASUREMENT_PLAN.md.</li>
+<li>Decisions pending: docs/HOSTING_OPTIONS.md, VERCEL_TEST_DEPLOYMENT.md, LEGAL_REVIEW.md, COMPLIANCE_ROADMAP.md.</li>
+<li>Presenting: demo/deck.html (18 slides), demo/walkthrough/WALKTHROUGH.html (20 steps), demo/DEMO_SCRIPT.md, demo/CEO_PLAN.md.</li>
+<li>Checks: <code>bash workspace/app/scripts/verify.sh</code> (the single completion check), <code>npm run walkthrough</code> (browser run with screenshots).</li>
+</ul></main>

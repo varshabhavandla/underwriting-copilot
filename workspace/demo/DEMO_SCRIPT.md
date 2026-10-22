@@ -1,5 +1,7 @@
 # Demo script (10 minutes, local, synthetic data only)
 
+See docs/TEAM_GUIDE.md section 13 for the current 15-minute demo including intake, upload and build in the browser.
+
 Start: `cd workspace/app && UW_TEST_ADMIN_URL=<local postgres superuser url> bash scripts/demo-up.sh`, then open http://127.0.0.1:3000/review. You are sent to a fake sign-in page (a stand-in for a real identity provider): choose Underwriter. Sign in as Viewer or Processor in a private window to show that they cannot decide. The script rebuilds the demo database each run, so the demo is repeatable. It uses `next dev` on purpose: the app refuses the development identity in production mode.
 
 Say first: all data is synthetic; the model provider is a mock; the tool prepares files and a human underwriter decides.

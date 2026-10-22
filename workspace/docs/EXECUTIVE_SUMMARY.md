@@ -1,6 +1,6 @@
 # Executive summary: AI-assisted commercial lending underwriting copilot (SBA 7(a) first)
 
-Date 2026-10-22. Status: local MVP on synthetic data with a mock model provider. Nothing is deployed, no real data was used, no lender was contacted. Claims are labeled measured (M), verified from a source (V), or assumed/estimated (E).
+Date 2026-10-22. Current status, counts and the demo guide are in docs/TEAM_GUIDE.md (454 tests, browser walkthrough, admin and sign-in built); the figures below were written earlier in the day. Status: local MVP on synthetic data with a mock model provider. Nothing is deployed, no real data was used, no lender was contacted. Claims are labeled measured (M), verified from a source (V), or assumed/estimated (E).
 
 ## What was built
 A TypeScript/Next.js/PostgreSQL application that prepares an SBA 7(a) loan file for a human underwriter and never decides credit.
