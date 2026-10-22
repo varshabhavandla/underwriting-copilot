@@ -6,7 +6,7 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - (was) B-101 SBA 7(a)/504 done (docs/SBA_PROCESS_MAP.md). Remaining: conventional SME (OCC/FDIC/Fed sources), SOP appendices 14,15,16,19, Reg B, 504 detail.
 - B-102 P0 done  Competitive scan and provisional wedge (docs/COMPETITIVE_SCAN.md, D-010). Follow-up B-116.
 - B-103 P1 done  Measurement plan (docs/MEASUREMENT_PLAN.md). Execution is B-308.
-- B-113 P1 todo  Vercel fit check: function duration/payload limits, background jobs, Postgres and storage options, region pinning, data-handling terms; read the Trust Center SOC 2 scope. Decide D-008 (data store, storage, jobs).
+- B-113 P1 partial  Vercel fit check: function duration/payload limits, background jobs, Postgres and storage options, region pinning, data-handling terms; read the Trust Center SOC 2 scope. Decide D-008 (data store, storage, jobs).
 - B-115 P1 done  Read SOP Appendix 15 in full (equity injection percentages) and 504 chapters before encoding those rule packs; spot-check every rule vs the published SOP (see C-201).
 - B-116 P0 todo  Validate wedge: open vendor trust centers, find other SBA-specific vendors, and prepare 5 lender interview questions (A-10..A-12). Needs builder to arrange conversations.
 ## Phase 2
@@ -28,10 +28,10 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-309 P1 done  Observability, hardening, threat model review.
 - B-310 P2 done  Synthetic generator: seeded packets with ground truth, 12 file classes (docs/MEASUREMENT_PLAN.md).
 - B-117 P1 todo  Decide D-011 authentication provider against criteria (SSO, organizations, audit log, residency); verify price and security pages.
-- B-118 P1 todo  Verify D-013/D-014/D-015: per-tenant key support, Postgres options with forced RLS and PITR, LLM provider data terms and SOC reports; produce a cost model from vendor price pages.
+- B-118 P1 partial  Verify D-013/D-014/D-015: per-tenant key support, Postgres options with forced RLS and PITR, LLM provider data terms and SOC reports; produce a cost model from vendor price pages.
 - B-119 P2 todo  CI check that every diagrams/*.mmd parses and docs embed the current copy.
 - B-120 P1 todo  Implement CI controls from DEVSECOPS.md: secret scan, dependency audit, SAST, SBOM, IaC policy checks, RLS policy tests; decide attestation approach on Vercel.
-- B-121 P1 todo  Primary-source follow-ups: OCC bulletin text for SR 26-2 companion, Federal Register 88 FR 37920 (third-party guidance), 16 CFR 314, AICPA Trust Services Criteria, Reg B text, CFPB circular status.
+- B-121 P1 partial  Primary-source follow-ups: OCC bulletin text for SR 26-2 companion, Federal Register 88 FR 37920 (third-party guidance), 16 CFR 314, AICPA Trust Services Criteria, Reg B text, CFPB circular status.
 - B-122 P1 todo  IaC skeleton (after D-013/D-014); run docker-compose locally; add Postgres roles/RLS test to run against the chosen managed database.
 - B-123 P1 todo  Add to the ledger tests: hash-chain anchoring design, per-tenant sequence gaps under rollbacks (a rolled-back insert leaves no gap because seq is computed inside the transaction), pooler (transaction mode) test.
 - B-124 P0 todo  Real model provider behind the gateway: verify data terms (retention, training, region, SOC report), implement, run eval harness (docs/MEASUREMENT_PLAN.md) and report real numbers. Needs builder approval before any external call.
@@ -111,3 +111,4 @@ Loop 11 (lender CISO / examiner view), objections and disposition:
 - B-133 P2 todo  Nonce-based script CSP for pages via a request proxy; move rate limiting to a shared store or edge before any multi-instance deployment.
 - B-134 P2 todo  Replace the pattern secret scan with gitleaks in CI; add SAST and build provenance.
 - B-135 P2 todo  Rule pack: model the special purpose property 25-year maturity exemption and the 51 percent real estate blended-maturity option precisely (currently conservative: needs_review); 504 chapters not encoded (MVP scope is 7(a)).
+- B-136 P1 todo  Remainder of B-113/B-118/B-121 after the 2026-10-22 pass (see end of docs/VENDOR_FIT.md): Trust Center reports, Anthropic retention policy page, managed-Postgres role/RLS test, KMS options, AICPA criteria, CFPB list page, primary OCC/FDIC bulletins. Account-dependent items need builder approval.

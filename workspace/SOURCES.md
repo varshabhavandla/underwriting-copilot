@@ -34,3 +34,14 @@ S-31 | https://csrc.nist.gov/pubs/sp/800/218/final | NIST SP 800-218 SSDF v1.1 (
 S-32 | https://www.law.cornell.edu/cfr/text/12/part-30/appendix-B | 12 CFR Part 30 Appendix B, Interagency Guidelines Establishing Information Security Standards | 2026-10-21 | Objectives; III.D service provider oversight; III.F annual board report
 S-33 | Third-party risk management interagency guidance, June 2023 (search summary; FDIC FIL-23-2029 and 88 FR 37920 not read) | Third-party risk management | 2026-10-21 | Lifecycle expectations; inventory; contract rights
 S-34 | SOC 2 vendor guides (Scrut, Sprinto and others; secondary) | SOC 2 Type 1 vs 2 | 2026-10-21 | Type definitions and typical observation periods; AICPA text not read
+S-35 | https://vercel.com/docs/functions/limitations | Vercel Functions limits | 2026-10-22 | Duration, memory, 4.5 MB body, file descriptors (page last_updated 2026-08-24)
+S-36 | https://vercel.com/docs/regions | Vercel regions | 2026-10-22 | 19 compute regions, default iad1
+S-37 | https://vercel.com/docs/security/compliance | Vercel security and compliance | 2026-10-22 | SOC 2 Type 2 claim, ISO 27001, encryption, data location statement (page last_updated 2026-09-08)
+S-38 | https://vercel.com/pricing | Vercel pricing | 2026-10-22 | Hobby non-commercial; Pro $20 base plus $20 per seat
+S-39 | https://neon.com/docs/introduction/plans | Neon plans | 2026-10-22 | Compute, storage, restore windows, compliance by plan
+S-40 | https://platform.claude.com/docs/en/manage-claude/api-and-data-retention | Claude API data retention | 2026-10-22 | ZDR, training statement, feature eligibility
+S-41 | https://www.govinfo.gov/content/pkg/FR-2023-06-09/html/2023-12340.htm | 88 FR 37920 interagency third-party guidance | 2026-10-22 | Confirmed citation and lifecycle (first 100,000 of 127,199 characters read)
+S-42 | https://www.ecfr.gov/api/versioner/v1/full/2026-10-01/title-16.xml?part=314&section=314.4 | 16 CFR 314.4 | 2026-10-22 | Safeguards Rule elements and FTC notice
+S-43 | https://www.consumerfinance.gov/rules-policy/regulations/1002/9/ | Reg B 1002.9 | 2026-10-22 | Business credit notification and reasons
+S-44 | https://www.consumerfinance.gov/compliance/guidance/withdrawn-guidance/ | CFPB withdrawn guidance (search result only, page not read) | 2026-10-22 | Circular 2022-03 withdrawal reported
+S-45 | https://www.federalreserve.gov/supervisionreg/srletters/sr2602.htm | SR 26-2 (search result; OCC and FDIC companion numbers from secondary sources) | 2026-10-22 | Companion bulletin numbers unverified

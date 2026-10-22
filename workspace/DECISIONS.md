@@ -70,3 +70,6 @@ The evaluation reports three labeled things: measured pipeline behavior on synth
 
 ## D-025 Hardening baseline (2026-10-22)
 Every API route goes through one wrapper (request id, per-client rate limit, content-type and size guards, scrubbed logging, generic errors, metrics), and a policy test fails if a route bypasses it. Rate limiting is in-process for now and is declared partial in THREAT_MODEL.md. Secret scan, audit and SBOM are minimal and labeled as such; full tooling is B-134.
+
+## D-026 Hosting and data-store options for the pilot (2026-10-22)
+Vercel Functions fit the workload (docs/VENDOR_FIT.md); uploads must go direct to storage above 4.5 MB, a connection pooler is required, and Pro or Enterprise is required for commercial use. Managed Postgres (Neon is the candidate priced) is an option, not a decision: role and forced-RLS compatibility and attestation scope are unverified. No purchase or account creation without builder approval.

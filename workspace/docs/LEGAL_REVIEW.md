@@ -19,3 +19,6 @@ Not legal advice. Items accumulate here for counsel.
 17. What outcome data we may export to a lender for its own disparate-impact monitoring, and what protected-basis information we may or must not collect or surface.
 18. Contract terms for GLBA service-provider obligations, audit rights and subcontractor flow-down.
 19. Current status of CFPB Circulars 2022-03 and 2023-03 on adverse action reasons with complex models.
+20. Applicability of the FTC Safeguards Rule (16 CFR 314) versus bank-side guidelines to us and to a lender customer (VENDOR_FIT.md).
+21. Reg B 1002.9 workflow for declines: reasons must be specific and written by the underwriter; confirm product design does not auto-generate reasons.
+22. Residency, subprocessor and retention terms for Vercel, the database host and the model provider, including whether ZDR is required by lender customers.
