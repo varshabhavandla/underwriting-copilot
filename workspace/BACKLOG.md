@@ -7,25 +7,25 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-102 P0 done  Competitive scan and provisional wedge (docs/COMPETITIVE_SCAN.md, D-010). Follow-up B-116.
 - B-103 P1 done  Measurement plan (docs/MEASUREMENT_PLAN.md). Execution is B-308.
 - B-113 P1 todo  Vercel fit check: function duration/payload limits, background jobs, Postgres and storage options, region pinning, data-handling terms; read the Trust Center SOC 2 scope. Decide D-008 (data store, storage, jobs).
-- B-115 P1 todo  Read SOP Appendix 15 in full (equity injection percentages) and 504 chapters before encoding those rule packs; spot-check every rule vs the published SOP (see C-201).
+- B-115 P1 done  Read SOP Appendix 15 in full (equity injection percentages) and 504 chapters before encoding those rule packs; spot-check every rule vs the published SOP (see C-201).
 - B-116 P0 todo  Validate wedge: open vendor trust centers, find other SBA-specific vendors, and prepare 5 lender interview questions (A-10..A-12). Needs builder to arrange conversations.
 ## Phase 2
 - B-201 P0 done  Reference architecture + 6 Mermaid diagrams (docs/ARCHITECTURE.md; diagrams/*.mmd parse-checked).
 - B-202 P0 done  Agentic layer design (docs/AGENTIC_LAYER.md).
 - B-203 P1 done  Fair lending / model risk (docs/FAIR_LENDING_MODEL_RISK.md); SR 11-7 superseded by SR 26-2, D-017.
-- B-204 P1 todo  DevSecOps blueprint (IaC, SAST, dep/secret scan, SBOM, signing, policy as code).
+- B-204 P1 done  DevSecOps blueprint (IaC, SAST, dep/secret scan, SBOM, signing, policy as code).
 - B-205 P1 done  Compliance roadmap and draft questionnaire answers (docs/COMPLIANCE_ROADMAP.md).
-- B-206 P1 todo  Needs-legal-or-compliance-review list (maintained continuously in docs/LEGAL_REVIEW.md).
+- B-206 P1 done  Needs-legal-or-compliance-review list (maintained continuously in docs/LEGAL_REVIEW.md).
 ## Phase 3 (in order)
 - B-301 P0 done  Scaffold: TypeScript core, Next.js shell (health, cases page), CI with Postgres service, docker-compose (written, not run here). IaC skeleton deferred to B-122 until D-013/D-014 are decided.
 - B-302 P0 done  Domain model + multi-tenant data layer: migration 0001 (forced RLS, append-only decisions and audit, hash-chained ledger, decision gate), repo layer, 42 tests on real Postgres 16, 4 mutation checks, end-to-end demo.
 - B-303 P0 done  Borrower application flow: validated application (SOP ownership total), EIN encrypted per tenant, /apply form and API, upload with content-type checks and encrypted storage. Dev-only tenant source; no auth or rate limiting (C-701).
-- B-304 P0 todo  Document ingestion: extraction/validation with confidence (tax returns, bank statements, financials).
+- B-304 P0 done  Document ingestion: extraction/validation with confidence (tax returns, bank statements, financials).
 - B-305 P0 done  Rules engine (11 rules, SOP-cited, docs/RULE_PACK.md generated) + file builder: runs, exceptions, verified cited memo draft with the mock provider; 125 tests, 5 mutation checks. Real provider B-124.
 - B-306 P0 done  Underwriter console: /review list and case page (facts with citations, rules, exceptions, cited memo, audit), exception disposition, memo adoption, decision API and form; DB-enforced gate; 137 tests; 5+2 mutation checks.
 - B-307 P1 done  Mock servicing adapter behind an interface, DB outbox guarded by RLS, leased delivery with backoff, signed webhooks with SSRF checks, worker route, docs/SERVICING_ADAPTER.md; 160 tests, 7 mutation checks.
-- B-308 P0 todo  Evaluation harness + measured time-to-decision vs simulated baseline.
-- B-309 P1 todo  Observability, hardening, threat model review.
+- B-308 P0 done  Evaluation harness + measured time-to-decision vs simulated baseline.
+- B-309 P1 done  Observability, hardening, threat model review.
 - B-310 P2 done  Synthetic generator: seeded packets with ground truth, 12 file classes (docs/MEASUREMENT_PLAN.md).
 - B-117 P1 todo  Decide D-011 authentication provider against criteria (SSO, organizations, audit log, residency); verify price and security pages.
 - B-118 P1 todo  Verify D-013/D-014/D-015: per-tenant key support, Postgres options with forced RLS and PITR, LLM provider data terms and SOC reports; produce a cost model from vendor price pages.
@@ -110,3 +110,4 @@ Loop 11 (lender CISO / examiner view), objections and disposition:
 - C-1103 P1: Baseline operator knows the system, biasing the baseline fast. Action: disclosed in the protocol; second operator in B-131.
 - B-133 P2 todo  Nonce-based script CSP for pages via a request proxy; move rate limiting to a shared store or edge before any multi-instance deployment.
 - B-134 P2 todo  Replace the pattern secret scan with gitleaks in CI; add SAST and build provenance.
+- B-135 P2 todo  Rule pack: model the special purpose property 25-year maturity exemption and the 51 percent real estate blended-maturity option precisely (currently conservative: needs_review); 504 chapters not encoded (MVP scope is 7(a)).

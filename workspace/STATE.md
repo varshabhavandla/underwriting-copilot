@@ -10,6 +10,7 @@ Answered 2026-10-21: TypeScript on Vercel (D-008); use broomva/skills, nothing f
 Do you accept the default stack in DECISIONS.md D-002/D-003 (Python 3.12 + FastAPI + Postgres, AWS, Terraform written but never applied)? If you prefer another language/framework or cloud, say so and I will supersede the decision before Phase 3 step 1.
 
 ## Done
+- Loop 13: B-115 rule constants re-checked against SOP 8.1 text (A-18); stale backlog items closed; docs/EXECUTIVE_SUMMARY.md written. Exit status: Phases 1-2 documents and Phase 3 MVP complete with passing tests; evaluation report exists. NOT met: two consecutive clean critique passes were not run as separate passes, and unblocked research items B-113, B-118, B-121 remain open (deployment-phase, need vendor-term review and builder approval). Stopping here per the exit rule with these stated.
 - Loop 12: observability and hardening: scrubbing JSON logger, request ids, Prometheus metrics (secret-protected), per-route rate limits, 415/size guards, security headers, secret scan, npm audit and SBOM in CI, route policy test, docs/THREAT_MODEL.md; 199 tests, e2e OK.
 - Workspace scaffold: STATE, BACKLOG, DECISIONS, ASSUMPTIONS, SOURCES, docs/, diagrams/, app/.
 - Existing foundation (stdlib Python: reconcile, versioned checklist, tenancy/idempotency store, synthetic fixtures, 12 tests + 6 fixture cases) moved to app/; verify still passes.
@@ -27,8 +28,8 @@ Do you accept the default stack in DECISIONS.md D-002/D-003 (Python 3.12 + FastA
 - Loop 2.5: ported core to TypeScript (14 tests, 6 fixture cases pass); installed broomva/skills (MIT) under .agents/skills with attribution.
 - Loop 2: SBA process map from SOP 50 10 8.1 primary text (docs/SBA_PROCESS_MAP.md); sources S-1..S-6.
 
-## Next (loop 13)
-Re-check unblocked backlog (B-111 rule spot-check against the published SOP, B-113 and B-118 vendor research, B-119 diagram CI check), run two consecutive critique passes, then write docs/EXECUTIVE_SUMMARY.md and stop.
+## Next
+Builder decisions needed: lender conversations (B-116), auth provider (B-117), approval for a real model provider (B-124), timed baseline (B-131), connect Vercel, delete branch claude/upbeat-heisenberg-zc0t8r in varshabhavandla/varshabhavandla. Then B-113, B-118, B-121, B-125.
 
 ## Blockers
 None. No paid resources, no outside contact, no real data.
