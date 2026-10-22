@@ -30,3 +30,6 @@ NIST SSDF (SP 800-218 v1.1, Feb 2022) is a set of high-level secure development 
 
 ## What is enforced today
 `scripts/verify.sh` and a GitHub Actions workflow running it. Everything else above is planned. Also enforced as of loop 12: a pattern-based secret scan in `verify`, `npm audit --omit=dev` (high) and a CycloneDX SBOM artifact in CI, security headers, rate limiting and a route policy test (see THREAT_MODEL.md). Not configured: SAST, a full secret scanner (gitleaks), signing or provenance, IaC policy checks.
+
+## Vulnerability remediation time frames (proposed, V15.1.1)
+Critical or actively exploited in a runtime dependency: patch or mitigate within 7 days. High: 30 days. Medium and low: next scheduled release, at most 90 days. CI fails on high or critical `npm audit` findings in production dependencies. These are our proposed targets, not lender requirements, and have not been tested against a real incident.

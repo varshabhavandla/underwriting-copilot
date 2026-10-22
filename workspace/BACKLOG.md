@@ -113,9 +113,13 @@ Loop 11 (lender CISO / examiner view), objections and disposition:
 - B-135 P2 todo  Rule pack: model the special purpose property 25-year maturity exemption and the 51 percent real estate blended-maturity option precisely (currently conservative: needs_review); 504 chapters not encoded (MVP scope is 7(a)).
 - B-136 P1 todo  Remainder of B-113/B-118/B-121 after the 2026-10-22 pass (see end of docs/VENDOR_FIT.md): Trust Center reports, Anthropic retention policy page, managed-Postgres role/RLS test, KMS options, AICPA criteria, CFPB list page, primary OCC/FDIC bulletins. Account-dependent items need builder approval.
 - B-137 P1 todo  Headless-browser e2e (Playwright) for the review console and apply form in verify.sh and CI.
-- B-138 P1 todo  Map NIST AI RMF (Govern, Map, Measure, Manage) and the GenAI profile to our documents and tests.
+- B-138 P1 done (docs/NIST_AI_RMF_MAPPING.md)  Map NIST AI RMF (Govern, Map, Measure, Manage) and the GenAI profile to our documents and tests.
 - B-139 P1 todo  Independent penetration test and SOC 2 readiness path; needs budget and builder approval.
 - B-140 P1 todo  Managed key custody (KMS) for field encryption, with per-tenant keys.
 - B-141 P2 todo  SBA form generation and E-Tran-style export only if lender interviews ask for it.
-- B-142 P1 todo  Requirement-level ASVS 5.0 self-assessment (L2 target) with evidence per requirement.
+- B-142 P1 done (docs/ASVS_SELF_ASSESSMENT.md, requirement level at L2 scope)  Requirement-level ASVS 5.0 self-assessment (L2 target) with evidence per requirement.
 - B-143 P0 todo  Head-to-head protocol with pre-registered targets (BENCHMARK.md section 5); needs lender or vendor access and approval.
+- B-144 P1 todo  Rate-limit client key: trust X-Forwarded-For only behind a proxy that overwrites it (ASVS V4.1.3, V15.3.4); decide the trusted-hop rule with the hosting choice.
+- B-145 P2 todo  Read and map NIST AI 600-1 (Generative AI Profile); close the AI RMF gaps listed in NIST_AI_RMF_MAPPING.md.
+- B-146 P1 todo  Upload hardening: malware scanning, extension-versus-content check, serve-as-attachment rule for the viewer (ASVS V5.2.2, V5.4.3).
+- B-147 P1 todo  Log shipping and alerting to a separate system; authentication event logging once B-117 lands (ASVS V16.3.1, V16.4.3).

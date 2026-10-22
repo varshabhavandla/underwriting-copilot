@@ -76,3 +76,6 @@ Vercel Functions fit the workload (docs/VENDOR_FIT.md); uploads must go direct t
 
 ## D-027 Browser-level checks belong in the demo path (2026-10-22)
 The curl-based e2e could not see that the no-referrer header broke browser form posts. The fix is Referrer-Policy same-origin plus a config test. Backlog B-137: add a headless-browser check of decide/dispose/adopt/apply to verify.sh.
+
+## D-028 Self-assessments are evidence-linked and test-checked (2026-10-22)
+The ASVS and NIST AI RMF assessments cite repository evidence, label unmet and deferred items, make no conformance claim, and are guarded by tests (static code claims, production configuration guards, document consistency). A claim that cannot be pointed at evidence is recorded as PARTIAL, GAP or NOT_ASSESSED.

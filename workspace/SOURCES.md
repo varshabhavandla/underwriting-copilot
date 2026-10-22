@@ -51,3 +51,4 @@ S-48 | search summary: Baker Hill SBA lending and credit memo tools (bakerhill.c
 S-49 | https://security.ocrolus.com/ | Ocrolus trust portal | 2026-10-22 | SOC 2 (type not stated), SOC 3, ISO 27001, PCI, VAPT report listed, subprocessors
 S-50 | https://raw.githubusercontent.com/OWASP/ASVS/v5.0.0/5.0/docs_en/OWASP_Application_Security_Verification_Standard_5.0.0_en.csv | OWASP ASVS 5.0.0 requirement list | 2026-10-22 | Chapter and level counts V1-V15 (V16 truncated)
 S-51 | https://www.nist.gov/itl/ai-risk-management-framework | NIST AI RMF | 2026-10-22 | Release 2023-01-26, GenAI profile 2024-07-26, under revision
+S-52 | https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.100-1.pdf | NIST AI 100-1, AI Risk Management Framework 1.0 (PDF read locally) | 2026-10-22 | 72 subcategory identifiers in Tables 1-4 (Govern 19, Map 18, Measure 22, Manage 13)

@@ -36,7 +36,7 @@ Public statements read: Abrigo footer lists SOC 1 Type 2 and SOC 2 Type 2 [V, S-
 | Availability, DR, monitoring, support | Present (Ocrolus lists a 4-hour RTO [V]) | None. Behind |
 
 ## 4. Standards we hold ourselves to (self-assessment, not certification)
-OWASP ASVS 5.0.0 (May 2025) has 17 chapters; the counts we could read for V1 to V15 are 70 level-1, 160 level-2 and 86 level-3 requirements, 316 in total, with V16 (logging) not fully read [V, S-50]. We have not tested ourselves requirement by requirement. Chapter-level status, honest:
+OWASP ASVS 5.0.0 (May 2025) has 17 chapters; the counts we could read for V1 to V15 are 70 level-1, 160 level-2 and 86 level-3 requirements, 316 in total, with V16 (logging) not fully read [V, S-50]. A requirement-level self-assessment now exists (ASVS_SELF_ASSESSMENT.md, 253 level 1 and 2 requirements: 65 met, 41 partial, 2 not met, 89 deferred to authentication and hosting, 55 not applicable, 1 not assessed); the chapter-level view below is the earlier summary.
 | ASVS chapter | Status |
 |---|---|
 | V1 Encoding, V2 Validation and business logic | Partial to strong: parameterized queries, schema validation, business invariants in the database |
@@ -50,7 +50,7 @@ OWASP ASVS 5.0.0 (May 2025) has 17 chapters; the counts we could read for V1 to 
 | V14 Data protection | Partial to strong: encryption, minimal clear text, no identifiers in logs |
 | V15 Secure coding and architecture | Partial: tests, mutation checks, SBOM, threat model; no SAST |
 | V16 Logging and error handling | Partial: structured scrubbed logs, request ids, audit ledger; no alerting or retention policy |
-Other references used: OWASP LLM Top 10 (2025) and 12 CFR Part 30 Appendix B (S-31, S-32); NIST SSDF SP 800-218 (S-31); interagency third-party guidance 88 FR 37920, whose lifecycle a lender will apply to us (S-41); SR 26-2 (S-33). NIST AI RMF 1.0 (January 26, 2023, with a Generative AI Profile of July 26, 2024, and under revision [V, S-51]) is not yet mapped: we will map Govern, Map, Measure and Manage to our documents (B-138).
+Other references used: OWASP LLM Top 10 (2025) and 12 CFR Part 30 Appendix B (S-31, S-32); NIST SSDF SP 800-218 (S-31); interagency third-party guidance 88 FR 37920, whose lifecycle a lender will apply to us (S-41); SR 26-2 (S-33). NIST AI RMF 1.0 (January 26, 2023, with a Generative AI Profile of July 26, 2024, and under revision [V, S-51]) is now mapped in NIST_AI_RMF_MAPPING.md (72 subcategories: 9 addressed, 40 partial, 22 gap, 1 not applicable); the Generative AI Profile is not yet mapped (B-145).
 
 ## 5. Protocol to test "better" (needs your approval and, for incumbents, access)
 1. Pre-register targets before running anything. Proposed targets, not results: 0 false accepts on a held-out packet set; at least 95 percent recall on planted exception classes with a stated false-positive ceiling; 100 percent of memo figures matching cited sources; every decision traceable to a named underwriter.
