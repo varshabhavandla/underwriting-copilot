@@ -56,3 +56,18 @@ S-53 | https://openid.net/specs/openid-connect-core-1_0.html | OpenID Connect Co
 S-54 | https://www.rfc-editor.org/rfc/rfc9700.html | RFC 9700 OAuth 2.0 Security Best Current Practice (first 100,000 of 142,010 characters read) | 2026-10-22 | PKCE S256, exact redirect matching, state/nonce, avoid implicit grant
 S-55 | https://vercel.com/docs/headers/request-headers | Vercel request headers | 2026-10-22 | x-forwarded-for is the client's public IP; Vercel overwrites it and does not forward external IPs (anti-spoofing); trusted proxy only on Enterprise
 S-56 | https://linux.die.net/man/8/clamd (via search result) | clamd(8) manual: INSTREAM framing, z/n prefix, StreamMaxLength | 2026-10-22 | 4-byte network-order chunk length, zero-length terminator, size-limit reply; reply strings OK/FOUND not confirmed
+S-57 | https://vercel.com/docs/networking/secure-compute | Vercel Secure Compute | 2026-10-22 | Enterprise only; dedicated IPs, VPC peering, VPN; custom pricing; large functions and extended duration not supported
+S-58 | https://vercel.com/docs/networking/static-ips | Vercel Static IPs | 2026-10-22 | Shared static egress IPs, $100 per month per project on Pro plus private data transfer; no extended duration or large functions
+S-59 | (same page as S-57) | Secure Compute pricing and VPC peering | 2026-10-22 | Enterprise, contact for pricing; AWS VPC peering
+S-60 | https://vercel.com/kb/guide/vercel-daemons | Vercel Daemons | 2026-10-22 | Public beta; containers that do not accept inbound traffic; 1 to 8 GiB; production only
+S-61 | https://neon.com/docs/connect/connection-pooling | Neon connection pooling | 2026-10-22 | PgBouncer transaction mode; SET unsupported; set_config not mentioned
+S-62 | https://neon.com/docs/manage/roles | Neon roles | 2026-10-22 | neon_superuser includes BYPASSRLS for projects after 2023-08-15; SQL roles get basic privileges; NOBYPASSRLS not addressed
+S-63 | https://vercel.com/docs/vercel-blob | Vercel Blob | 2026-10-22 | Private stores, S3-backed durability, client uploads, 19 regions
+S-64 | https://vercel.com/docs/vercel-blob/security | Vercel Blob security | 2026-10-22 | AES-256 at rest; private stores need authentication; no customer-managed key statement
+S-65 | https://aws.amazon.com/guardduty/pricing/ | GuardDuty Malware Protection for S3 pricing | 2026-10-22 | $0.09 per GB, about $0.215 per 1,000 objects, free tier 1,000 requests and 1 GB (US East); behavior docs not readable
+S-66 | https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-proxy-pinning.html | RDS Proxy pinning | 2026-10-22 | PostgreSQL: SET and set_config (default values) and prepared statements pin the session
+S-67 | https://aws.amazon.com/kms/pricing/ | AWS KMS pricing | 2026-10-22 | $1 per key per month; 20,000 free requests; about $0.03 per 10,000 requests
+S-68 | https://aws.amazon.com/fargate/pricing/ | AWS Fargate pricing | 2026-10-22 | ARM $0.0000089944 per vCPU-second, $0.0000009889 per GB-second; x86 $0.000011244 and $0.000001235 (US East)
+S-69 | search summary: AWS App Runner availability change (AWS docs and What's New, secondary summaries) | AWS App Runner | 2026-10-22 | Maintenance mode; closed to new customers from 2026-04-30; ECS Express Mode suggested
+S-70 | search summary: third-party RDS price lists (sparecores, infratally, bytebase) | RDS PostgreSQL prices | 2026-10-22 | db.t4g.small about $0.032 per hour single-AZ, double Multi-AZ, gp3 about $0.115 per GB-month; AWS page tables did not render
+S-71 | https://aws.amazon.com/elasticloadbalancing/pricing/ | ALB pricing | 2026-10-22 | $0.0225 per hour plus $0.008 per LCU-hour (US East)
