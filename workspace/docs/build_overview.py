@@ -6,12 +6,11 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
-from docx import Document
-from docx.shared import Pt, RGBColor, Inches
+
+from docstyle import DocBuilder, NAVY, TEAL, SLATE, LIGHT, INK
 
 here = pathlib.Path(__file__).parent
 (here / "img").mkdir(exist_ok=True)
-NAVY, TEAL, SLATE, LIGHT, INK = "#0F2540", "#1B998B", "#3D6FB6", "#EEF2F6", "#17212B"
 
 
 def box(ax, x, y, w, h, fc, ec=None, r=0.08):
@@ -95,32 +94,8 @@ def architecture():
 workflow()
 architecture()
 
-d = Document()
-for s in d.sections:
-    s.left_margin = s.right_margin = Inches(0.9); s.top_margin = s.bottom_margin = Inches(0.8)
-st = d.styles["Normal"]; st.font.name = "Calibri"; st.font.size = Pt(11.5)
-for n, sz in (("Heading 1", 15), ("Title", 26)):
-    h = d.styles[n]; h.font.name = "Calibri"; h.font.size = Pt(sz); h.font.bold = True; h.font.color.rgb = RGBColor(0x0F, 0x25, 0x40)
-
-
-def H(t): d.add_heading(t, level=1)
-
-
-def P(t):
-    p = d.add_paragraph(t); p.paragraph_format.space_after = Pt(6); return p
-
-
-def B(items):
-    for t in items:
-        p = d.add_paragraph(style="List Bullet"); p.paragraph_format.space_after = Pt(3)
-        if isinstance(t, tuple):
-            r = p.add_run(t[0]); r.bold = True; p.add_run(t[1])
-        else:
-            p.add_run(t)
-
-
-d.add_paragraph("Underwriting Copilot", style="Title")
-P("Project overview").runs[0].font.size = Pt(14)
+doc = DocBuilder("Underwriting Copilot", subtitle="Project overview")
+H, P, B = doc.H, doc.P, doc.B
 
 H("What it is")
 P("Underwriting Copilot is software that helps a lender prepare a small-business loan file. We are starting with SBA 7(a) loans. "
@@ -143,17 +118,17 @@ B([("1. Application. ", "A processor enters the borrower and the loan request. T
    ("6. Decision. ", "The underwriter reviews the file and approves, declines or sends it back. Approving past an open serious problem needs a written reason."),
    ("7. Handoff and record. ", "An approved file goes to the lender's servicing system (a mock one for now). Every step is saved in a log that cannot be changed afterwards.")])
 
-d.add_page_break()
+doc.page_break()
 H("Workflow diagram")
 P("The same eight stages, with what happens inside each. Stage 6 is highlighted because it is the only place a decision is made.")
-d.add_picture(str(here / "img" / "workflow.png"), width=Inches(6.2))
+doc.picture(here / "img" / "workflow.png", width_in=6.2)
 P("Stages 1, 2, 3, 5 and 6 follow the workflow map the team built in NotebookLM. Rules, Handoff and Audit were collapsed in the screenshot of that map, so their details come from the project's own design.").runs[0].italic = True
 
-d.add_page_break()
+doc.page_break()
 H("Architecture: how the pieces fit")
 P("Four things matter for understanding the system. A web application is what people use. A database holds the data and enforces the most important rules itself, so a bug in the application cannot break them. "
   "A malware scanner checks every upload. Outside services read documents and receive approved files. Items marked “stand-in” are not real yet.")
-d.add_picture(str(here / "img" / "architecture.png"), width=Inches(6.7))
+doc.picture(here / "img" / "architecture.png", width_in=6.7)
 
 H("Who uses it")
 B([("Processor: ", "enters applications, uploads documents, builds the file."),
@@ -167,19 +142,6 @@ B([("A human decides. ", "This is enforced by the database, not only by the scre
    ("Each lender's data is kept separate. ", "One lender cannot see another's files."),
    ("Documents cannot give orders. ", "Text inside a document is treated as data. If a document tries to instruct the software, it is flagged and a person is told.")])
 
-H("Where we are today")
-P("Working and tested, using made-up (synthetic) data on a local computer:")
-B(["The full path from application to decision, with the checks above.",
-   "Sign-in, four user roles and admin screens.",
-   "454 automated tests and a 40-step run through the real screens, all passing.",
-   "On 120 synthetic test packets the software accepted 87.8% of figures correctly and wrongly accepted none."])
-P("Not done yet:")
-B(["No real documents or lenders have been tested, so real-world accuracy is unknown.",
-   "A stand-in model is used instead of a real AI provider, and scanned documents cannot be read yet (no OCR).",
-   "Nothing is deployed, and the hosting choice is still open.",
-   "No outside security test or legal review has happened. Nothing here is legal advice.",
-   "Several SBA checks are not built yet, such as eligibility, collateral and credit reports."])
-
 H("What happens next")
 B([("Days 1 to 30: ", "talk to lenders, time how long the work takes by hand with two underwriters, choose the sign-in provider and the hosting."),
    ("Days 31 to 60: ", "connect a real AI provider and scanning, and publish the real accuracy results, including failures."),
@@ -191,5 +153,5 @@ B(["Which loan types and volumes to focus on first, and what result counts as su
    "A decision on hosting and on which AI provider to evaluate."])
 
 P("All data in this project is synthetic. No real borrower data is used.").runs[0].italic = True
-d.save(here / "Underwriting_Copilot_Project_Overview.docx")
+doc.save(here / "Underwriting_Copilot_Project_Overview.docx")
 print("ok")
