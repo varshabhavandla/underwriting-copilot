@@ -205,10 +205,10 @@ bullets([("Multi-Tenant Isolation: ",
 d.add_page_break()
 H1("5. Workflow and architecture diagrams")
 P("The workflow as a diagram. The audit record runs through every stage and is drawn as its own box (8). Stage 6 is the only place a decision is made.", after=4)
-d.add_picture(str(here / "img" / "workflow.png"), width=Inches(5.6))
+d.add_picture(str(here / "img" / "workflow.png"), width=Inches(5.0))
 P("How the pieces fit together. A web application is what people use. A database holds the data and enforces the most important rules itself. A malware scanner checks uploads. "
-  "Outside services read documents and receive approved files. Items marked as stand-in are not real yet.", after=4)
-d.add_picture(str(here / "img" / "architecture.png"), width=Inches(5.6))
+  "Outside services read documents and receive approved files. Items marked as stand-in are not real yet.", after=4).paragraph_format.keep_with_next = True
+d.add_picture(str(here / "img" / "architecture.png"), width=Inches(5.2))
 
 H1("6. What we have measured, and the standards we map to")
 table(["Item", "Result", "How to read it"], [
