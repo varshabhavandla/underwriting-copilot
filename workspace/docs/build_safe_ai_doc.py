@@ -210,33 +210,5 @@ P("How the pieces fit together. A web application is what people use. A database
   "Outside services read documents and receive approved files. Items marked as stand-in are not real yet.", after=4).paragraph_format.keep_with_next = True
 d.add_picture(str(here / "img" / "architecture.png"), width=Inches(5.2))
 
-H1("6. What we have measured, and the standards we map to")
-table(["Item", "Result", "How to read it"], [
-    ["Automated tests", "454 pass, including real-database tests", "Measured"],
-    ["Browser walkthrough of the whole workflow", "40 of 40 steps pass with four roles and three files; also runs in the automated build on GitHub", "Measured, synthetic data"],
-    ["Extraction on 120 synthetic packets (4,030 fields)", "87.8% accepted and correct; none falsely accepted; 8.4% not extracted (scans, no OCR)", "Measured with a stand-in model that reads printed labels"],
-    ["Planted problems", "Caught in every packet of every class; two classes also over-flagged", "Measured"],
-    ["OWASP ASVS 5.0.0, levels 1 and 2", "253 requirements: 108 met, 40 partial, 1 not met, 41 deferred, 62 not applicable, 1 not assessed", "Our own assessment, evidence cited"],
-    ["NIST AI RMF", "72 subcategories: 9 addressed, 40 partial, 22 gaps, 1 not applicable", "Our own assessment"],
-], [2.1, 3.0, 1.5])
-
-H1("7. What this does not do yet")
-bullets(["No real documents or lenders have been tested, so accuracy on real paperwork is unknown. A stand-in model is used, and scanned or image-only documents cannot be read yet.",
-         "No time saving has been measured. A timed comparison with two underwriters is planned.",
-         "Several checks are not built: eligibility, collateral, tax transcripts, personal financial statements, credit reports and global cash flow. Debt service uses only the new loan and a placeholder rate.",
-         "Nothing is deployed, and no identity provider or hosting has been chosen.",
-         "No outside penetration test, SOC 2 report or lender vendor review exists. Items for legal and compliance review are listed separately. Nothing in this document is legal advice."])
-
-H1("8. Summary")
-P("Underwriting Copilot is designed so that speed never costs control. It prepares the file, sources every figure and applies the SBA rules, while the decision, the "
-  "override and the record all stay with people and are enforced by the database.")
-box("Key takeaways.", "", [
-    "Efficiency without a black box: every figure links to its page and passage.",
-    "Mandatory human decision: software cannot approve, decline or rank, and the database refuses it.",
-    "Proactive defenses: malware scanning, documents treated as data, and separated lender data.",
-    "Provable auditability: an append-only, hash-chained record of every action.",
-    "Honest limits: synthetic data only; real-world accuracy and time savings are still to be measured."])
-last = d.paragraphs[-1]  # the spacer after the final box: make it tiny so it cannot spill onto an empty page
-last.paragraph_format.space_after = Pt(0); last.paragraph_format.space_before = Pt(0); last.paragraph_format.line_spacing = Pt(1)
 d.save(here / "Safe_AI_for_Commercial_Loan_Underwriting.docx")
 print("ok")
