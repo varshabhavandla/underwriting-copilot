@@ -7,6 +7,7 @@ import { addDocument, appendAudit } from "../db/repo";
 import { DOC_TYPES, type DocType } from "../extraction/schemas";
 import { ingestDocument } from "./ingest";
 import { flagUnreadable } from "./unreadable";
+import { readDocument, ReadRefused, ReadUnavailable, type ReadResult } from "./readDocument";
 import { log } from "../observability/log";
 import { inc } from "../observability/metrics";
 import type { Services } from "../server/services";
@@ -59,15 +60,20 @@ export async function receiveDocument(s: Services, caseId: string, upload: { nam
       return id;
     });
   }
-  if (kind !== "text") {
+  let read: ReadResult;
+  try {
+    read = await readDocument(bytes, kind);
+  } catch (e) {
+    if (!(e instanceof ReadUnavailable) && !(e instanceof ReadRefused)) throw e;
+    const why = e instanceof ReadRefused ? `the file could not be read (${e.message}); needs manual review` : `the file could not be read automatically (${e.message}); needs manual review`;
     await withTenant(s.sql, tctx, async (tx) => {
       const dup = await tx`select 1 from exceptions where document_id = ${documentId} and kind = 'ocr_required'`;
-      if (dup.length === 0) await flagUnreadable(tx, s.tenantId, caseId, documentId!, kind);
+      if (dup.length === 0) await flagUnreadable(tx, s.tenantId, caseId, documentId!, kind, why);
     });
     return { status: 202, body: { documentId, ingested: false, reason: "ocr_required" } };
   }
-  const pages = bytes.toString("utf8").split("\f");
-  const r = await ingestDocument(s.sql, s.gateway, new Date(), tctx, { caseId, documentId, docVersion: 1, docType: docType as DocType, pages });
+  const pages = read.pages;
+  const r = await ingestDocument(s.sql, s.gateway, new Date(), tctx, { caseId, documentId, docVersion: 1, docType: docType as DocType, pages, source: read.source, ...(read.meanConfidence !== undefined ? { meanConfidence: read.meanConfidence } : {}) });
   inc("documents_total", { ingested: String(!r.skipped) });
-  return { status: r.skipped ? 200 : 201, body: { documentId, ingested: !r.skipped, factsProposed: r.factsProposed, factsAccepted: r.factsAccepted, exceptions: r.exceptions } };
+  return { status: r.skipped ? 200 : 201, body: { documentId, ingested: !r.skipped, factsProposed: r.factsProposed, factsAccepted: r.factsAccepted, exceptions: r.exceptions, readBy: read.source } };
 }

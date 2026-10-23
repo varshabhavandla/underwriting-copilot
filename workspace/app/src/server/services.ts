@@ -5,6 +5,7 @@ import type { OidcConfig } from "../auth/oidc";
 import { LocalKeyProvider, masterKeyFromEnv } from "../crypto/fieldCrypto";
 import { connect, withTenant, type Sql } from "../db/client";
 import { DEFAULT_OPTIONS, LlmGateway } from "../llm/gateway";
+import { AnthropicProvider, EXTRACT_PROMPT_VERSION, MEMO_PROMPT_VERSION } from "../llm/anthropicProvider";
 import { MockProvider } from "../llm/mockProvider";
 import { MockServicingAdapter } from "../servicing/mock";
 import { LocalObjectStore, PgObjectStore, type ObjectStore } from "../storage/objectStore";
@@ -29,6 +30,16 @@ export interface Services extends Infra {
 
 const g = globalThis as unknown as { __uw?: Infra; __uwDevRole?: Role | null };
 
+/** The mock reads printed labels and calls nothing. The real provider is opt-in and refuses to start without the explicit approval switch (see serverEnv). */
+export function gatewayFromEnv(env: ReturnType<typeof serverEnv>): LlmGateway {
+  if (env.LLM_PROVIDER !== "anthropic") return new LlmGateway(new MockProvider("faithful"), DEFAULT_OPTIONS);
+  const provider = new AnthropicProvider({
+    apiKey: env.ANTHROPIC_API_KEY!, effort: env.LLM_EFFORT, fallbacks: env.LLM_FALLBACKS === "on", timeoutMs: env.LLM_TIMEOUT_MS,
+    ...(env.LLM_MODEL ? { model: env.LLM_MODEL } : {}),
+  });
+  return new LlmGateway(provider, { ...DEFAULT_OPTIONS, promptVersion: EXTRACT_PROMPT_VERSION, memoPromptVersion: MEMO_PROMPT_VERSION, timeoutMs: env.LLM_TIMEOUT_MS + 5_000 });
+}
+
 /** Wires local-development services. Production replaces the key provider, store and model provider (D-013, D-015). */
 export function infra(): Infra {
   const env = serverEnv();
@@ -40,7 +51,7 @@ export function infra(): Infra {
       sql,
       keys,
       store: env.OBJECT_STORE === "postgres" ? new PgObjectStore(sql, keys) : new LocalObjectStore(env.UPLOAD_DIR!, keys),
-      gateway: new LlmGateway(new MockProvider("faithful"), DEFAULT_OPTIONS),
+      gateway: gatewayFromEnv(env),
       servicing: new MockServicingAdapter("ok"),
       scanner: env.CLAMD_HOST ? new ClamdScanner(env.CLAMD_HOST, env.CLAMD_PORT) : new NoScanner(),
     };

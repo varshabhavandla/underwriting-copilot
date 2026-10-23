@@ -13,7 +13,12 @@ const offenders = (re: RegExp) => files.filter((f) => re.test(read(f))).map((f) 
 describe("static claims in the ASVS self-assessment", () => {
   it("V1.2.1/V3.2.2: no raw HTML injection in components", () => expect(offenders(/dangerouslySetInnerHTML|\.innerHTML\s*=/)).toEqual([]));
   it("V1.3.2: no dynamic code execution", () => expect(offenders(/\beval\s*\(|new Function\s*\(/)).toEqual([]));
-  it("V1.2.5: no operating system calls", () => expect(offenders(/child_process|execSync|spawnSync|execFile/)).toEqual([]));
+  it("V1.2.5: operating system calls exist only in the document reader, without a shell and with fixed arguments (D-037)", () => {
+    expect(offenders(/child_process|execSync|spawnSync|execFile|\bspawn\(/)).toEqual(["src/ingest/readDocument.ts"]);
+    const src = read(join(root, "src/ingest/readDocument.ts"));
+    expect(src).not.toMatch(/shell\s*:\s*true|(?<![.\w])exec\(|execSync|spawnSync|\bspawn\(/);
+    for (const m of src.matchAll(/\brun\("([a-z]+)"/g)) expect(["pdftotext", "pdftoppm", "pdfinfo", "tesseract"]).toContain(m[1]);
+  });
   it("V1.2.4: raw SQL execution exists only in the migration runner", () => expect(offenders(/\.unsafe\(/)).toEqual(["src/db/migrate.ts"]));
   it("V11.5.1: no non-cryptographic randomness", () => expect(offenders(/Math\.random\(/)).toEqual([]));
   it("V14.3.3: no browser storage", () => expect(offenders(/localStorage|sessionStorage|indexedDB/)).toEqual([]));

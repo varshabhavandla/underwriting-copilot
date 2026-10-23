@@ -1,5 +1,5 @@
 import { withTenant, type Sql, type TenantContext } from "../db/client";
-import { recordDecision, setCaseStatus } from "../db/repo";
+import { appendAudit, recordDecision, setCaseStatus } from "../db/repo";
 import { SBA_7A_PACK } from "../rules/sba7a";
 
 export type DecisionKind = "approve" | "decline" | "request_more_info";
@@ -61,6 +61,34 @@ export async function adoptMemo(sql: Sql, ctx: TenantContext, input: { memoId: s
     });
   } catch (e) {
     if (/duplicate key/.test((e as Error).message)) throw new ActionDenied("memo already adopted");
+    throw friendly(e);
+  }
+}
+
+/**
+ * An underwriter confirms or rejects a held (proposed) fact after checking it against the original document. This is how figures read by OCR, or from a
+ * flagged document, become usable by the rules. A fact's status can change once, from proposed (the database makes any later change impossible).
+ * Confirmation is a data check, not a credit decision. Rules must be run again afterwards.
+ */
+export async function reviewFact(sql: Sql, ctx: TenantContext, input: { factId: string; verdict: "confirm" | "reject"; note?: string }): Promise<{ key: string; caseId: string }> {
+  const uid = ctx.userId;
+  if (!uid) throw new ActionDenied("not signed in");
+  const note = (input.note ?? "").trim();
+  if (input.verdict === "reject" && note.length === 0) throw new ActionDenied("a note is required to reject a fact");
+  try {
+    return await withTenant(sql, ctx, async (tx) => {
+      const rows = await tx<{ key: string; case_id: string }[]>`
+        update facts set status = ${input.verdict === "confirm" ? "accepted" : "rejected"} where id = ${input.factId} and status = 'proposed' returning key, case_id`;
+      if (rows.length === 0) throw new ActionDenied("fact not found or already reviewed");
+      const f = rows[0]!;
+      await appendAudit(tx, ctx.tenantId, {
+        actorKind: "user", actorId: uid, action: input.verdict === "confirm" ? "fact.confirmed" : "fact.rejected",
+        subject: { caseId: f.case_id, factId: input.factId, key: f.key, ...(note ? { note: note.slice(0, 300) } : {}) },
+      });
+      return { key: f.key, caseId: f.case_id };
+    });
+  } catch (e) {
+    if (e instanceof ActionDenied) throw e;
     throw friendly(e);
   }
 }

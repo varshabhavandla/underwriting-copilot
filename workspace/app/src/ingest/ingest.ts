@@ -6,6 +6,7 @@ import { appendAudit, proposeFact } from "../db/repo";
 import { LlmGateway } from "../llm/gateway";
 import { BudgetExceeded } from "../llm/types";
 import { scanInjection } from "../pipeline";
+import type { ReadSource } from "./readDocument";
 
 
 export interface IngestInput {
@@ -14,6 +15,10 @@ export interface IngestInput {
   docVersion: number;
   docType: DocType;
   pages: string[];
+  /** How the page text was produced. Text read by OCR can be wrong, so its facts are held for a person to confirm. Default: text. */
+  source?: ReadSource;
+  /** Mean OCR word confidence, 0 to 100. */
+  meanConfidence?: number;
 }
 
 export interface IngestResult {
@@ -58,6 +63,9 @@ export async function ingestDocument(sql: Sql, gateway: LlmGateway, asOf: Date, 
       if (await raise(tx, tenantId, input.caseId, input.documentId, kind, severity, detail, source)) exceptions.push(kind);
     };
     if (injection.length) await note("injection_suspected", "critical", "document contains instruction-like text; its facts need human review", { pages: injection.map((i) => i.page) });
+    const ocr = input.source === "ocr";
+    if (ocr) await note("ocr_source", "medium", "figures in this document were read from an image by OCR; confirm each against the original before relying on it", { meanConfidence: input.meanConfidence ?? null });
+    if (ocr && input.meanConfidence !== undefined && input.meanConfidence < 75) await note("ocr_low_confidence", "high", `the scan was hard to read (mean OCR confidence ${input.meanConfidence}); re-scan or read the original`, { meanConfidence: input.meanConfidence });
     if (budgetError || !outcome) {
       await note("extraction_failed", "high", budgetError ?? "extraction did not run");
       await appendAudit(tx, tenantId, { actorKind: "system", actorId: "ingest", action: "document.processed", subject: { documentId: input.documentId, caseId: input.caseId }, result: "error" });
@@ -101,8 +109,9 @@ export async function ingestDocument(sql: Sql, gateway: LlmGateway, asOf: Date, 
         schema_allowed: true,
         validators: blocked.has(v.field) ? "failed" : "passed",
         document_not_flagged: injection.length === 0,
+        source_text_reliable: !ocr,
       };
-      const applicable = [checks.citation_verified, checks.value_valid, checks.schema_allowed, checks.validators === "passed", checks.document_not_flagged];
+      const applicable = [checks.citation_verified, checks.value_valid, checks.schema_allowed, checks.validators === "passed", checks.document_not_flagged, checks.source_text_reliable];
       const score = applicable.filter(Boolean).length / applicable.length;
       const key = fieldKey(input.docType, v.field);
       const id = await proposeFact(tx, tenantId, {
@@ -119,7 +128,7 @@ export async function ingestDocument(sql: Sql, gateway: LlmGateway, asOf: Date, 
         await appendAudit(tx, tenantId, { actorKind: "system", actorId: "ingest", action: "fact.proposed", subject: { caseId: input.caseId, factId: id, key, score } });
       }
     }
-    await appendAudit(tx, tenantId, { actorKind: "system", actorId: "ingest", action: "document.processed", subject: { documentId: input.documentId, caseId: input.caseId }, result: c.result });
+    await appendAudit(tx, tenantId, { actorKind: "system", actorId: "ingest", action: "document.processed", subject: { documentId: input.documentId, caseId: input.caseId, readBy: input.source ?? "text" }, result: c.result });
     return { skipped: false, factsProposed: proposed, factsAccepted: accepted, exceptions };
   });
 }

@@ -36,6 +36,16 @@ const Env = z.object({
   CLAMD_PORT: z.coerce.number().int().min(1).max(65535).default(3310),
   SESSION_IDLE_MINUTES: z.coerce.number().int().min(1).max(480).default(30),
   SESSION_ABSOLUTE_HOURS: z.coerce.number().int().min(1).max(72).default(12),
+  /** "mock" reads printed labels and calls nothing outside the process. "anthropic" sends redacted document text to the Anthropic API (D-036). */
+  LLM_PROVIDER: z.enum(["mock", "anthropic"]).default("mock"),
+  /** Must be exactly "approved" for LLM_PROVIDER=anthropic. A person sets it after reviewing the provider's data terms; it is the code form of "no external call without approval". */
+  LLM_EXTERNAL_CALLS: z.literal("approved").optional(),
+  ANTHROPIC_API_KEY: z.string().min(20).optional(),
+  LLM_MODEL: z.string().min(3).max(80).optional(),
+  LLM_EFFORT: z.enum(["low", "medium", "high"]).default("low"),
+  /** Server-side fallback when the provider's safety classifier declines a request. On by default. */
+  LLM_FALLBACKS: z.enum(["on", "off"]).default("on"),
+  LLM_TIMEOUT_MS: z.coerce.number().int().min(5_000).max(300_000).default(80_000),
   WEBHOOK_URL: z.string().url().optional(),
   WEBHOOK_SECRET: z.string().min(16).optional(),
 });
@@ -45,6 +55,10 @@ export function serverEnv() {
   if (!parsed.success) throw new Error("invalid server environment: " + parsed.error.issues.map((i) => i.path.join(".")).join(", "));
   const d = parsed.data;
   if (d.SSO_MODE === "per_tenant" && !d.APP_ORIGIN) throw new Error("APP_ORIGIN is required when SSO_MODE is per_tenant");
+  if (d.LLM_PROVIDER === "anthropic") {
+    if (!d.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is required when LLM_PROVIDER is anthropic");
+    if (d.LLM_EXTERNAL_CALLS !== "approved") throw new Error("LLM_PROVIDER=anthropic sends document text to an external service; set LLM_EXTERNAL_CALLS=approved only after the provider's data terms were reviewed and approved");
+  }
   if (process.env["NODE_ENV"] === "production") {
     if (d.DEV_TENANT_ID || d.DEV_USER_ID) throw new Error("DEV_TENANT_ID must not be set in production");
     if (!d.CLAMD_HOST && !d.ALLOW_UNSCANNED_UPLOADS) throw new Error("CLAMD_HOST is required in production: uploads must be malware-scanned (a test deployment may set ALLOW_UNSCANNED_UPLOADS=test-environment-only)");

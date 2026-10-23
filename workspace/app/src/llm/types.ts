@@ -29,6 +29,8 @@ export interface LlmProvider {
   readonly model: string;
   extract(req: ExtractRequest, signal: AbortSignal): Promise<unknown>;
   draftMemo(req: import("../memo/types").MemoRequest, signal: AbortSignal): Promise<unknown>;
+  /** The model that actually answered a call, when it can differ from `model` (a server-side fallback ran). Recorded in the audit log. */
+  servedModel?(raw: unknown): string | undefined;
 }
 
 export class BudgetExceeded extends Error {}

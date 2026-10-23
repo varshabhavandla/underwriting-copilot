@@ -35,8 +35,8 @@ Status: todo | doing | done | blocked. Priority: P0 highest.
 - B-121 P1 partial  Primary-source follow-ups: OCC bulletin text for SR 26-2 companion, Federal Register 88 FR 37920 (third-party guidance), 16 CFR 314, AICPA Trust Services Criteria, Reg B text, CFPB circular status.
 - B-122 P1 todo  IaC skeleton (after D-013/D-014); run docker-compose locally; add Postgres roles/RLS test to run against the chosen managed database.
 - B-123 P1 todo  Add to the ledger tests: hash-chain anchoring design, per-tenant sequence gaps under rollbacks (a rolled-back insert leaves no gap because seq is computed inside the transaction), pooler (transaction mode) test.
-- B-124 P0 todo  Real model provider behind the gateway: verify data terms (retention, training, region, SOC report), implement, run eval harness (docs/MEASUREMENT_PLAN.md) and report real numbers. Needs builder approval before any external call.
-- B-125 P0 todo  OCR/PDF text extraction (provider choice D-015) so PDFs and scans are ingested; redaction of names and addresses; persistent token vault.
+- B-124 P0 partial (provider built and tested offline, D-036; needs your approval, an API key and a data-terms review before any real call)  Real model provider behind the gateway: verify data terms (retention, training, region, SOC report), implement, run eval harness (docs/MEASUREMENT_PLAN.md) and report real numbers. Needs builder approval before any external call.
+- B-125 P0 partial (2026-10-23, D-037: local PDF text and Tesseract OCR built and tested; OCR facts are held for a person; accuracy on real scans unmeasured, B-161)  OCR/PDF text extraction (provider choice D-015) so PDFs and scans are ingested; redaction of names and addresses; persistent token vault.
 - B-126 P1 todo  Rate limiting, authentication and CSRF review on upload and application routes; signed direct-to-storage uploads for production.
 - B-127 P1 todo  Lender overlay: replace the placeholder 9 percent assumed rate with lender pricing input; add existing-debt schedule and global cash flow (needed for DSC to resolve beyond needs_review).
 - B-128 P1 todo  Extend ingestion and rules to documents the pack lists as not evaluated (owner PFS, credit reports, tax transcripts, collateral, debt schedule).
@@ -134,3 +134,7 @@ Loop 11 (lender CISO / examiner view), objections and disposition:
 - B-156 P2 todo  Image re-encoding and an isolated, resource-limited worker for PDF parsing and OCR (with B-125).
 - B-157 P0 todo  Builder decision on hosting (docs/HOSTING_OPTIONS.md section 8); then run the section 7 tests (accounts need approval).
 - B-158 P0 todo  Builder runs docs/VERCEL_TEST_DEPLOYMENT.md steps 1 to 7 and reports the db:check output (needs Neon and Vercel accounts and an OIDC provider; Vercel Pro for commercial use).
+
+- B-159 P1 todo  Run the extraction evaluation against the real provider on synthetic packets (`EVAL_PROVIDER=anthropic`), report accuracy and cost, including failures. Needs B-124 approval and a key.
+- B-160 P2 todo  Enforce in the database that only an underwriter can move a fact out of proposed (D-038); today it is a role check plus audit.
+- B-161 P1 todo  Measure OCR accuracy on realistic scans (skew, stamps, handwriting), not only clean synthetic renders.

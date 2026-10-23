@@ -8,6 +8,8 @@ import { BudgetExceeded, ExtractResponse, ProviderFailed, type LlmProvider } fro
 
 export interface GatewayOptions {
   promptVersion: string;
+  /** Version label recorded for memo drafting calls. */
+  memoPromptVersion?: string;
   maxInputChars: number;
   maxCallsPerCase: number;
   maxTokensPerCase: number;
@@ -97,6 +99,8 @@ export class LlmGateway {
     } finally {
       clearTimeout(timer);
     }
+    const served = this.provider.servedModel?.(raw);
+    if (served) base.model = served;
     const outputHash = sha(JSON.stringify(raw));
     const parsed = ExtractResponse.safeParse(raw);
     if (!parsed.success) {
@@ -137,7 +141,7 @@ export class LlmGateway {
   async draftMemo(caseId: string, businessName: string, sources: MemoSource[]): Promise<{ draft: MemoDraftT | null; problems: MemoProblem[]; call: LlmCallRecord }> {
     const redactor = new Redactor();
     const request: MemoRequest = {
-      task: "draft_memo", promptVersion: "draft-memo@1", businessName: redactor.redact(businessName),
+      task: "draft_memo", promptVersion: this.opt.memoPromptVersion ?? "draft-memo@1", businessName: redactor.redact(businessName),
       sources: sources.map((s) => ({ ...s, text: redactor.redact(s.text) })),
     };
     const chars = JSON.stringify(request).length;
@@ -161,6 +165,8 @@ export class LlmGateway {
     } finally {
       clearTimeout(timer);
     }
+    const served = this.provider.servedModel?.(raw);
+    if (served) base.model = served;
     const outputHash = sha(JSON.stringify(raw));
     const parsed = MemoDraft.safeParse(raw);
     if (!parsed.success) return { draft: null, problems: [], call: { ...base, outputHash, result: "error", error: "output failed schema validation" } };

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { withTenant } from "@/db/client";
-import { adoptMemo, ActionDenied, decideCase, disposeException, type DecisionKind } from "@/review/actions";
+import { adoptMemo, ActionDenied, decideCase, disposeException, reviewFact, type DecisionKind } from "@/review/actions";
 import { caseDetail, describeCite } from "@/review/queries";
 import { buildFile } from "@/file/buildFile";
 import { receiveDocument } from "@/ingest/receive";
@@ -43,6 +43,21 @@ async function dispose(form: FormData): Promise<void> {
     throw e;
   }
 }
+async function reviewFactAction(form: FormData): Promise<void> {
+  "use server";
+  const caseId = String(form.get("caseId"));
+  const { s, ctx } = await ctxOf("decide", caseId);
+  const verdict = String(form.get("verdict"));
+  const factId = String(form.get("factId"));
+  if (!UUID.test(caseId) || !UUID.test(factId) || !["confirm", "reject"].includes(verdict)) return back(caseId, "invalid request");
+  try {
+    const r = await reviewFact(s.sql, ctx, { factId, verdict: verdict as "confirm" | "reject", note: String(form.get("note") ?? "") });
+    return back(caseId, `${r.key} ${verdict === "confirm" ? "confirmed" : "rejected"}. Rebuild the file to run the rules again.`);
+  } catch (e) {
+    if (e instanceof ActionDenied) return back(caseId, e.message);
+    throw e;
+  }
+}
 async function uploadDocuments(form: FormData): Promise<void> {
   "use server";
   const caseId = String(form.get("caseId"));
@@ -53,8 +68,8 @@ async function uploadDocuments(form: FormData): Promise<void> {
   const lines: string[] = [];
   for (const f of files) {
     const r = await receiveDocument(s, caseId, { name: f.name, bytes: Buffer.from(await f.arrayBuffer()) }, docType);
-    const b = r.body as { error?: string; factsProposed?: number; factsAccepted?: number; reason?: string; ingested?: boolean };
-    lines.push(`${f.name.slice(0, 60)}: ${r.status >= 400 ? `refused (${b.error})` : b.reason === "ocr_required" ? "stored; needs manual reading (no OCR yet)" : b.ingested === false ? "already uploaded" : `${b.factsAccepted ?? 0} facts accepted, ${(b.factsProposed ?? 0) - (b.factsAccepted ?? 0)} held for review`}`);
+    const b = r.body as { error?: string; factsProposed?: number; factsAccepted?: number; reason?: string; ingested?: boolean; readBy?: string };
+    lines.push(`${f.name.slice(0, 60)}: ${r.status >= 400 ? `refused (${b.error})` : b.reason === "ocr_required" ? "stored; could not be read automatically, needs manual reading" : b.ingested === false ? "already uploaded" : b.readBy === "ocr" ? `read by OCR: ${b.factsProposed ?? 0} facts held for you to confirm against the original` : `${b.factsAccepted ?? 0} facts accepted, ${(b.factsProposed ?? 0) - (b.factsAccepted ?? 0)} held for review`}`);
   }
   return back(caseId, lines.join("; "));
 }
@@ -139,8 +154,14 @@ export default async function CaseReview({ params, searchParams }: { params: Pro
       </section>
 
       <section><h2>Facts with citations</h2>
-        <table cellPadding={4}><thead><tr><th align="left">Fact</th><th align="left">Value</th><th align="left">Status</th><th align="left">Evidence</th><th align="left">Source passage</th></tr></thead>
-          <tbody>{d.facts.map((f) => <tr key={f.id}><td>{f.key}</td><td>{f.value}</td><td>{f.status}</td><td>{f.evidence_score}</td><td>p.{f.page}: “{f.passage}”</td></tr>)}</tbody></table>
+        <table cellPadding={4}><thead><tr><th align="left">Fact</th><th align="left">Value</th><th align="left">Status</th><th align="left">Evidence</th><th align="left">Source passage</th>{!decided && can(s.role, "decide") && <th align="left">Review</th>}</tr></thead>
+          <tbody>{d.facts.map((f) => <tr key={f.id}><td>{f.key}</td><td>{f.value}</td><td>{f.status}</td><td>{f.evidence_score}</td><td>p.{f.page}: “{f.passage}”</td>{!decided && can(s.role, "decide") && (
+            <td>{f.status === "proposed" ? (
+              <form action={reviewFactAction} style={{ display: "grid", gap: 4 }}>
+                <input type="hidden" name="caseId" value={caseId} /><input type="hidden" name="factId" value={f.id} />
+                <input name="note" placeholder="note (required to reject)" aria-label={`note for ${f.key}`} />
+                <span><button name="verdict" value="confirm">Confirm against original</button> <button name="verdict" value="reject">Reject</button></span>
+              </form>) : null}</td>)}</tr>)}</tbody></table>
       </section>
 
       <section><h2>Credit memo draft</h2>

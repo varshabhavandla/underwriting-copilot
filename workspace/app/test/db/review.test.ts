@@ -9,7 +9,7 @@ import { buildFile } from "../../src/file/buildFile";
 import { ingestDocument } from "../../src/ingest/ingest";
 import { DEFAULT_OPTIONS, LlmGateway } from "../../src/llm/gateway";
 import { MockProvider } from "../../src/llm/mockProvider";
-import { ActionDenied, adoptMemo, decideCase, disposeException } from "../../src/review/actions";
+import { ActionDenied, adoptMemo, decideCase, disposeException, reviewFact } from "../../src/review/actions";
 import { caseDetail, describeCite, listCases } from "../../src/review/queries";
 import { makePacket, type Variant } from "../../src/synthetic/generate";
 import { dbEnabled, urls } from "./urls";
@@ -159,6 +159,23 @@ describe.skipIf(!dbEnabled)("underwriter review: decisions, dispositions, adopti
     expect((await withTenant(app, as(uw), (tx) => tx`select 1 from audit_events where action = 'memo.adopted' and subject->>'caseId' = ${id}`)).length).toBe(1);
     await expect(admin`delete from memo_adoptions`).rejects.toThrow(/append-only/);
     expect((await withTenant(app, as(uw), (tx) => caseDetail(tx, id)))!.memo!.adopted).toBe(true);
+  });
+
+  it("an underwriter confirms a held fact (audited) and rejects another with a note; a decided fact cannot be reviewed again; another lender cannot see it", async () => {
+    const id = await prepared("bank_arith_error"); // the bank facts are held as proposed
+    const held = await withTenant(app, as(uw), (tx) => tx<{ id: string; key: string }[]>`select id, key from facts where case_id = ${id} and status = 'proposed' order by key`);
+    expect(held.length).toBeGreaterThanOrEqual(2);
+    const [a, b] = [held[0]!, held[1]!];
+    const r = await reviewFact(app, as(uw), { factId: a.id, verdict: "confirm" });
+    expect(r).toEqual({ key: a.key, caseId: id });
+    expect((await withTenant(app, as(uw), (tx) => tx<{ status: string }[]>`select status from facts where id = ${a.id}`))[0]!.status).toBe("accepted");
+    expect((await withTenant(app, as(uw), (tx) => tx`select 1 from audit_events where action = 'fact.confirmed' and subject->>'factId' = ${a.id} and actor_id = ${uw}`)).length).toBe(1);
+    await expect(reviewFact(app, as(uw), { factId: b.id, verdict: "reject" })).rejects.toThrow(/note is required/);
+    await reviewFact(app, as(uw), { factId: b.id, verdict: "reject", note: "does not match the original statement" });
+    expect((await withTenant(app, as(uw), (tx) => tx<{ status: string }[]>`select status from facts where id = ${b.id}`))[0]!.status).toBe("rejected");
+    await expect(reviewFact(app, as(uw), { factId: a.id, verdict: "reject", note: "changed my mind" })).rejects.toThrow(/not found or already reviewed/);
+    await expect(reviewFact(app, as(otherUw, otherTenant), { factId: b.id, verdict: "confirm" })).rejects.toThrow(/not found or already reviewed/); // control: same answer as a missing fact
+    await expect(reviewFact(app, { tenantId: tenant }, { factId: b.id, verdict: "confirm" })).rejects.toThrow(/not signed in/);
   });
 
   it("the audit chain still verifies after all of this", async () => {
