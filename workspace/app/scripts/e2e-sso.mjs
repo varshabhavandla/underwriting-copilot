@@ -13,15 +13,33 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(page, cond, ms = 15000) { for (let t = 0; t < ms; t += 100) { if (cond(new URL(page.url()))) return true; await sleep(100); } return false; }
 const path = (page) => new URL(page.url()).pathname;
 const call = async (page, method, p, data) => {
-  const r = await page.evaluate(async ([m, u, d]) => { const x = await fetch(u, { method: m, headers: d ? { "content-type": "application/json" } : {}, body: d ? JSON.stringify(d) : undefined }); return { status: x.status, text: await x.text() }; }, [method, base + p, data]);
-  return { status: () => r.status, json: async () => JSON.parse(r.text) };
+  // sent from node with the browser's session cookie, not from inside the page, so a dev-server page reload cannot abort the request
+  const c = (await page.context().cookies()).find((x) => x.name === "__Host-uw_session");
+  const r = await fetch(base + p, { method, headers: { ...(data ? { "content-type": "application/json" } : {}), origin: base, ...(c ? { cookie: `__Host-uw_session=${c.value}` } : {}) }, body: data ? JSON.stringify(data) : undefined });
+  const text = await r.text();
+  return { status: () => r.status, json: async () => JSON.parse(text) };
+};
+/** page.goto that survives the dev server reloading the page for a moment (it aborts a navigation that races with the reload). */
+const gotoSafe = async (page, url) => {
+  for (let i = 0; i < 4; i++) {
+    try { await page.goto(url); return; } catch (e) { if (!/ERR_ABORTED|interrupted by another navigation/.test(String(e)) || i === 3) throw e; await sleep(800); }
+  }
+};
+/** Clicks something that submits a form (a server action), waits for its response, then lets the page settle. Works for a full page load and for an in-place update. */
+const act = async (page, click) => {
+  const posted = page.waitForResponse((r) => r.request().method() === "POST" && !r.url().includes("/api/"), { timeout: 120000 }); // a cold dev server compiles the page and its action on first use
+  await click();
+  await posted;
+  await page.waitForLoadState("networkidle");
+  await sleep(300);
 };
 /** Sign in the way a person would: type the organization name, then pick a user at that organization's provider. */
 async function signIn(org, label, ctx) {
   ctx ??= await browser.newContext();
+  ctx.setDefaultTimeout(120000);
   const page = await ctx.newPage();
   if (process.env.E2E_DEBUG) { page.on("console", (m) => console.log("  [console]", m.text().slice(0, 200))); page.on("requestfailed", (r) => console.log("  [requestfailed]", r.url().slice(0, 120), r.failure()?.errorText)); }
-  await page.goto(`${base}/review`);
+  await gotoSafe(page, `${base}/review`);
   if (path(page) !== "/signin") return { ctx, page, reachedSignin: false };
   const basePort = new URL(base).port;
   await page.waitForLoadState("networkidle"); // let the page's script attach before typing
@@ -37,7 +55,7 @@ async function signIn(org, label, ctx) {
 }
 
 try {
-  const anon = await browser.newPage(); await anon.goto(`${base}/review`);
+  const anon = await browser.newPage(); await gotoSafe(anon, `${base}/review`);
   eq("anonymous visitors are sent to the organization sign-in page", path(anon), "/signin");
   check("which asks for an organization name", (await anon.locator("input[name=org]").count()) === 1);
   const home = await fetch(`${base}/`, { redirect: "manual" });
@@ -49,12 +67,12 @@ try {
   eq("acme's admin signs in through acme's provider", path(A.page), "/review");
   const B = await signIn("beta", "Admin");
   eq("beta's admin signs in through beta's provider", path(B.page), "/review");
-  await A.page.goto(`${base}/admin/users`); await B.page.goto(`${base}/admin/users`);
+  await gotoSafe(A.page, `${base}/admin/users`); await gotoSafe(B.page, `${base}/admin/users`);
   const ua = await A.page.innerText("body"), ub = await B.page.innerText("body");
   check("each admin sees only their own organization's users", ua.includes("admin@acme.example") && !ua.includes("admin@beta.example") && ub.includes("admin@beta.example") && !ub.includes("admin@acme.example"));
   const made = await call(A.page, "POST", "/api/applications", { legalName: "Acme Only Diner Inc", entityType: "s_corp", ein: "12-3456789", naics: "722511", yearsInBusiness: 6, requestedTermMonths: 120, loanAmount: "$250,000", purposes: ["working_capital"], owners: [{ name: "A Owner", percent: 100 }], certifyAccurate: true });
   eq("acme creates a case", made.status(), 201);
-  await B.page.goto(`${base}/review`);
+  await gotoSafe(B.page, `${base}/review`);
   check("beta cannot see acme's case", !(await B.page.innerText("body")).includes("Acme Only Diner"));
 
   // unknown and disabled organizations look the same
@@ -64,7 +82,7 @@ try {
 
   // an attacker tries to feed acme's callback a valid code from beta's provider
   const X = await browser.newContext(); const xp = await X.newPage();
-  await xp.goto(`${base}/signin`); await xp.waitForLoadState("networkidle"); await xp.fill("input[name=org]", "acme");
+  await gotoSafe(xp, `${base}/signin`); await xp.waitForLoadState("networkidle"); await xp.fill("input[name=org]", "acme");
   await xp.click("button:has-text('Continue')");
   await until(xp, (u) => u.port !== new URL(base).port);
   const authUrl = new URL(xp.url());
@@ -72,52 +90,52 @@ try {
   const atB = new URL(`${issB}/authorize`); for (const [k, v] of authUrl.searchParams) atB.searchParams.set(k, v); atB.searchParams.set("client_id", "uw-b"); atB.searchParams.set("fake_sub", "sub-admin");
   const codeFromB = new URL((await fetch(atB, { redirect: "manual" })).headers.get("location")).searchParams.get("code");
   check("(attacker obtained a valid code from beta's provider)", Boolean(codeFromB));
-  await xp.goto(`${base}/api/auth/callback?code=${codeFromB}&state=${state}`);
+  await gotoSafe(xp, `${base}/api/auth/callback?code=${codeFromB}&state=${state}`);
   eq("a code from another organization's provider is refused", path(xp), "/forbidden");
   check("and no session was created", (await X.cookies()).find((c) => c.name === "__Host-uw_session") === undefined);
 
   // acme's admin looks at, tests and changes the provider settings
-  await A.page.goto(`${base}/admin/sso`);
+  await gotoSafe(A.page, `${base}/admin/sso`);
   const sso = await A.page.content();
   check("the settings page shows the organization name, callback URL and issuer", sso.includes("<strong>acme</strong>") && sso.includes(`${base}/api/auth/callback`) && sso.includes(issA));
   check("and never the client secret", !sso.includes(process.env.E2E_SECRET_A));
-  await A.page.click("button:has-text('Test the provider')"); await A.page.waitForLoadState("networkidle");
+  await act(A.page, () => A.page.click("button:has-text('Test the provider')"));
   check("a connection test passes against the real provider", (await A.page.innerText("body")).includes(`identifies itself as ${issA}`));
 
-  await A.page.fill("input[name=requiredAmr]", "hwk"); await A.page.click("button:has-text('Save')"); await A.page.waitForLoadState("networkidle");
+  await A.page.fill("input[name=requiredAmr]", "hwk"); await act(A.page, () => A.page.click("button:has-text('Save')"));
   check("requiring a method the provider does not report is saved", (await A.page.innerText("body")).includes("saved"));
   const strict = await signIn("acme", "Admin");
   eq("and sign-in is then refused (required authentication method missing)", path(strict.page), "/forbidden");
-  await A.page.fill("input[name=requiredAmr]", "mfa"); await A.page.click("button:has-text('Save')"); await A.page.waitForLoadState("networkidle");
+  await A.page.fill("input[name=requiredAmr]", "mfa"); await act(A.page, () => A.page.click("button:has-text('Save')"));
 
-  await A.page.fill("input[name=issuer]", issB); await A.page.click("button:has-text('Save')"); await A.page.waitForLoadState("networkidle");
+  await A.page.fill("input[name=issuer]", issB); await act(A.page, () => A.page.click("button:has-text('Save')"));
   check("pointing at beta's provider is refused", (await A.page.innerText("body")).includes("already used by another organization"));
-  await A.page.goto(`${base}/admin/sso`);
+  await gotoSafe(A.page, `${base}/admin/sso`);
 
-  await A.page.fill("input[name=issuer]", "https://169.254.169.254"); await A.page.uncheck("input[name=enabled]"); await A.page.click("button:has-text('Save')"); await A.page.waitForLoadState("networkidle");
-  await A.page.click("button:has-text('Test the provider')"); await A.page.waitForLoadState("networkidle");
+  await A.page.fill("input[name=issuer]", "https://169.254.169.254"); await A.page.uncheck("input[name=enabled]"); await act(A.page, () => A.page.click("button:has-text('Save')"));
+  await act(A.page, () => A.page.click("button:has-text('Test the provider')"));
   check("a provider address pointing at cloud metadata is blocked by the connection test", (await A.page.innerText("body")).includes("insecure_endpoint"), (await A.page.innerText("body")).slice(0, 200));
-  await A.page.fill("input[name=issuer]", issA); await A.page.check("input[name=enabled]"); await A.page.click("button:has-text('Save')"); await A.page.waitForLoadState("networkidle");
+  await A.page.fill("input[name=issuer]", issA); await A.page.check("input[name=enabled]"); await act(A.page, () => A.page.click("button:has-text('Save')"));
   check("acme's settings are restored", (await A.page.innerText("body")).includes("saved and enabled"));
   eq("acme's admin is still signed in throughout", (await call(A.page, "GET", "/api/health")).status(), 200);
 
   // disabling single sign-on is indistinguishable from an unknown organization
-  await A.page.uncheck("input[name=enabled]"); await A.page.click("button:has-text('Save')"); await A.page.waitForLoadState("networkidle");
+  await A.page.uncheck("input[name=enabled]"); await act(A.page, () => A.page.click("button:has-text('Save')"));
   const off = await signIn("acme", "Admin");
   eq("a disabled organization cannot sign in", path(off.page), "/forbidden");
   eq("and sees the same page as for an unknown organization", await off.page.innerText("body"), unknownText);
-  await A.page.check("input[name=enabled]"); await A.page.click("button:has-text('Save')"); await A.page.waitForLoadState("networkidle");
+  await A.page.check("input[name=enabled]"); await act(A.page, () => A.page.click("button:has-text('Save')"));
 
   // linking a second person at acme's provider
-  await A.page.goto(`${base}/admin/users`);
-  await A.page.fill("input[name=email]", "viewer@acme.example"); await A.page.selectOption("form:has(button:has-text('Create user')) select[name=role]", "viewer"); await A.page.click("button:has-text('Create user')"); await A.page.waitForLoadState("networkidle");
+  await gotoSafe(A.page, `${base}/admin/users`);
+  await A.page.fill("input[name=email]", "viewer@acme.example"); await A.page.selectOption("form:has(button:has-text('Create user')) select[name=role]", "viewer"); await act(A.page, () => A.page.click("button:has-text('Create user')"));
   const row = A.page.locator("tr:has-text('viewer@acme.example')");
-  await row.locator("input[name=subject]").fill("sub-viewer"); await row.locator("button:has-text('Link')").click(); await A.page.waitForLoadState("networkidle");
+  await row.locator("input[name=subject]").fill("sub-viewer"); await act(A.page, () => row.locator("button:has-text('Link')").click());
   check("the admin links the new person to acme's provider", (await A.page.innerText("body")).includes("Identity linked"));
   const V = await signIn("acme", "Viewer");
   eq("and they can sign in as a viewer", path(V.page), "/review");
   check("with the viewer role", (await V.page.innerText("body")).includes("(viewer)"));
-  await V.page.goto(`${base}/admin/sso`);
+  await gotoSafe(V.page, `${base}/admin/sso`);
   eq("a viewer cannot open the single sign-on settings", path(V.page), "/forbidden");
 
   // secrets at rest and in logs

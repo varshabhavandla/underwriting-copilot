@@ -1,10 +1,14 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import { after } from "next/server";
 import { withTenant } from "@/db/client";
 import { adoptMemo, ActionDenied, decideCase, disposeException, reviewFact, type DecisionKind } from "@/review/actions";
 import { caseDetail, describeCite } from "@/review/queries";
 import { buildFile } from "@/file/buildFile";
-import { receiveDocument } from "@/ingest/receive";
+import { acceptUpload } from "@/ingest/receive";
+import { processDocument, retryProcessing, stalledDocuments } from "@/ingest/processing";
+import { caseLive } from "@/review/live";
+import { LiveRefresh } from "../live-refresh";
 import { requireSession } from "@/server/guard";
 import { can, type Action } from "@/auth/roles";
 
@@ -66,12 +70,28 @@ async function uploadDocuments(form: FormData): Promise<void> {
   const files = form.getAll("file").filter((f): f is File => f instanceof File && f.size > 0);
   if (!UUID.test(caseId) || files.length === 0) return back(caseId, "choose at least one file");
   const lines: string[] = [];
+  const queued: string[] = [];
   for (const f of files) {
-    const r = await receiveDocument(s, caseId, { name: f.name, bytes: Buffer.from(await f.arrayBuffer()) }, docType);
-    const b = r.body as { error?: string; factsProposed?: number; factsAccepted?: number; reason?: string; ingested?: boolean; readBy?: string };
-    lines.push(`${f.name.slice(0, 60)}: ${r.status >= 400 ? `refused (${b.error})` : b.reason === "ocr_required" ? "stored; could not be read automatically, needs manual reading" : b.ingested === false ? "already uploaded" : b.readBy === "ocr" ? `read by OCR: ${b.factsProposed ?? 0} facts held for you to confirm against the original` : `${b.factsAccepted ?? 0} facts accepted, ${(b.factsProposed ?? 0) - (b.factsAccepted ?? 0)} held for review`}`);
+    const r = await acceptUpload(s, caseId, { name: f.name, bytes: Buffer.from(await f.arrayBuffer()) }, docType);
+    const b = r.body as { error?: string };
+    if (r.documentId) queued.push(r.documentId);
+    else lines.push(`${f.name.slice(0, 60)}: refused (${b.error})`);
+  }
+  // reading, OCR and the model take a while: answer now and keep working after the response; the page follows the progress by itself
+  if (queued.length) {
+    after(async () => { for (const id of queued) await processDocument(s, id); });
+    lines.unshift(`${queued.length} file${queued.length === 1 ? "" : "s"} received and being processed`);
   }
   return back(caseId, lines.join("; "));
+}
+async function retryDocument(form: FormData): Promise<void> {
+  "use server";
+  const caseId = String(form.get("caseId"));
+  const { s, ctx } = await ctxOf("intake", caseId);
+  const documentId = String(form.get("documentId"));
+  if (!UUID.test(caseId) || !UUID.test(documentId)) return back(caseId, "invalid request");
+  if (await retryProcessing(s.sql, ctx, documentId)) { after(async () => { await processDocument(s, documentId); }); return back(caseId, "Processing again"); }
+  return back(caseId, "That document is not waiting for a retry");
 }
 async function build(form: FormData): Promise<void> {
   "use server";
@@ -100,8 +120,13 @@ export default async function CaseReview({ params, searchParams }: { params: Pro
   const { msg } = await searchParams;
   if (!UUID.test(caseId)) notFound();
   const s = await requireSession("view", `/review/${caseId}`);
-  const d = await withTenant(s.sql, { tenantId: s.tenantId }, (tx) => caseDetail(tx, caseId));
-  if (!d) notFound();
+  const [d, live] = await withTenant(s.sql, { tenantId: s.tenantId }, async (tx) => [await caseDetail(tx, caseId), await caseLive(tx, caseId)] as const);
+  if (!d || !live) notFound();
+  if (can(s.role, "intake")) {
+    // self-healing: a document nobody is working on (the server restarted mid-way) is started again
+    const ids = await stalledDocuments(s.sql, { tenantId: s.tenantId, ...(s.userId ? { userId: s.userId } : {}) }, caseId);
+    if (ids.length) after(async () => { for (const id of ids) await processDocument(s, id); });
+  }
   const decided = ["approved", "declined"].includes(d.caseRow.status);
   const a = d.application;
   return (
@@ -110,6 +135,7 @@ export default async function CaseReview({ params, searchParams }: { params: Pro
       <h1>{a?.legal_name ?? d.caseRow.case_ref}</h1>
       <p>Status: <strong>{d.caseRow.status}</strong>. This file was prepared by software. Facts below are extracted and internally consistent; they are not verified against the original source.</p>
       {msg && <p role="status" style={{ background: "#eef", padding: 8 }}>{msg}</p>}
+      <LiveRefresh url={`/api/cases/${caseId}/live`} version={live.version} active={live.active} />
 
       {a && (
         <section><h2>Request</h2>
@@ -132,6 +158,18 @@ export default async function CaseReview({ params, searchParams }: { params: Pro
               <input type="hidden" name="caseId" value={caseId} />
               <button type="submit">{d.rules.length ? "Rebuild the file (rules and memo)" : "Build the file (run rules, draft the memo)"}</button>
             </form>)}
+        </section>
+      )}
+
+      {live.documents.length > 0 && (
+        <section><h2>Document processing</h2>
+          <ul data-testid="documents">{live.documents.map((x) => (
+            <li key={x.id} data-state={x.processing}>
+              {x.docType.replace(/_/g, " ")}: <strong>{x.processing === "queued" ? "waiting" : x.processing === "processing" ? "processing" : x.processing === "failed" ? "failed" : "done"}</strong>
+              {x.processing === "failed" && x.error ? ` (${x.error})` : ""}
+              {x.processing === "failed" && !decided && can(s.role, "intake") && (
+                <form action={retryDocument} style={{ display: "inline", marginLeft: 8 }}><input type="hidden" name="caseId" value={caseId} /><input type="hidden" name="documentId" value={x.id} /><button>Retry</button></form>)}
+            </li>))}</ul>
         </section>
       )}
 

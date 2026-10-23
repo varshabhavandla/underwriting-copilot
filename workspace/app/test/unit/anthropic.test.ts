@@ -214,7 +214,7 @@ describe("anthropic provider", () => {
 });
 
 describe("provider switches", () => {
-  const base = { DATABASE_URL: "postgres://u:p@127.0.0.1:5432/db" };
+  const base = { DATABASE_URL: "postgres://u:p@127.0.0.1:5432/db" }; // secret-scan:allow
   const withEnv = (vars: Record<string, string | undefined>, fn: () => void) => {
     const keys = ["DATABASE_URL", "LLM_PROVIDER", "LLM_EXTERNAL_CALLS", "ANTHROPIC_API_KEY", "NODE_ENV"];
     const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));

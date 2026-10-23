@@ -60,10 +60,10 @@ Roles are stored in our database, not taken from the sign-in provider, so a prov
 |---|---|
 | Intake, upload, extraction, rules, exceptions, memo, decision gate, handoff, audit | Built and tested on synthetic data |
 | Sign-in, roles, admin screens, per-lender sign-in | Built; tested with a stand-in identity provider only |
-| Browser walkthrough of the whole workflow | 40 of 40 steps pass, in verify and CI [measured] |
-| Automated tests | 454 pass, including real-database tests [measured] |
-| Real model provider | **Not done.** A stand-in model that reads printed labels is used (B-124) |
-| OCR for scans and images | **Not done.** Image-only files route to manual reading (B-125) |
+| Browser walkthrough of the whole workflow | 40 of 40 steps pass, in verify and CI, including documents processed in the background with the page updating by itself [measured] |
+| Automated tests | 500 pass, including real-database tests [measured] |
+| Real model provider | **Built and tested offline, never run against the real service.** The stand-in model is still the default; the real one needs approval, a key and a data-terms review (B-124, D-036) |
+| OCR for scans and images | **Built** (local Tesseract and PDF text, D-037). Facts read by OCR are held for an underwriter to confirm. Accuracy on real scans is unmeasured (B-125, B-161) |
 | Real identity provider chosen | **Not done** (B-117) |
 | Hosting | **Not decided.** Options compared in docs/HOSTING_OPTIONS.md; test deployment prepared (B-157, B-158) |
 | Real lender conversations | **Not done** (B-116) |

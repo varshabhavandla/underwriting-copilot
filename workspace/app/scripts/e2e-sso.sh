@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Browser end-to-end check of per-organization single sign-on: two organizations, each with its own (fake) identity provider.
 set -uo pipefail
-cd "$(dirname "$0")/.."; . scripts/lib/killport.sh
+cd "$(dirname "$0")/.."; . scripts/lib/killport.sh; . scripts/lib/devserver.sh
 cd "$(dirname "$0")/.."
 if [ -z "${UW_TEST_ADMIN_URL:-}" ]; then echo "e2e-sso: set UW_TEST_ADMIN_URL" >&2; exit 2; fi
 if [ -z "${PW_CHROMIUM:-}" ]; then
@@ -27,7 +27,7 @@ for _ in $(seq 1 30); do curl -s -o /dev/null "$ISSA/.well-known/openid-configur
 mkdir -p "$WORK/uploads"
 # no DEV_TENANT_ID and no OIDC_* settings: only per-organization sign-in exists
 export DATABASE_URL="postgres://uw_app:uw_app_dev@$HOSTPORT/$DB" UPLOAD_DIR="$WORK/uploads" SSO_MODE=per_tenant APP_ORIGIN="http://127.0.0.1:$WEB_PORT"
-setsid node_modules/.bin/next dev -p "$WEB_PORT" > "$WORK/server.log" 2>&1 & SRV=$!
+fresh_next; setsid node_modules/.bin/next dev -p "$WEB_PORT" > "$WORK/server.log" 2>&1 & SRV=$!
 for _ in $(seq 1 90); do curl -s -o /dev/null "http://127.0.0.1:$WEB_PORT/api/health" && break; sleep 1; done
 [ -n "${E2E_CURL:-}" ] && { curl -s -i -m 20 "http://127.0.0.1:$WEB_PORT/api/auth/login?org=acme" | head -12 | cut -c1-200; tail -5 "$WORK/server.log" | cut -c1-300; exit 3; }
 SMOKE_ALLOW_HTTP=1 bash scripts/smoke-remote.sh "http://127.0.0.1:$WEB_PORT" || { echo "e2e-sso: FAILED (smoke checks)"; exit 1; }

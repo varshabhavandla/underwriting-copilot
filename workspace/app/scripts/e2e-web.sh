@@ -2,7 +2,7 @@
 # End-to-end check of the running web app against a fresh local database. Exits non-zero on the first mismatch.
 # Needs: UW_TEST_ADMIN_URL (disposable Postgres superuser), psql, curl, openssl.
 set -uo pipefail
-cd "$(dirname "$0")/.."; . scripts/lib/killport.sh
+cd "$(dirname "$0")/.."; . scripts/lib/killport.sh; . scripts/lib/devserver.sh
 cd "$(dirname "$0")/.."
 : "${UW_TEST_ADMIN_URL:?set UW_TEST_ADMIN_URL}"
 WORK="$(mktemp -d)"; trap '[ -n "${SRV:-}" ] && kill -- -$SRV 2>/dev/null; [ -n "${CLAM:-}" ] && kill -- -$CLAM 2>/dev/null; killport "$WEB_PORT" "${CLAM_PORT:-}"; rm -rf "$WORK"' EXIT
@@ -33,7 +33,7 @@ CLAM_PORT=${CLAM_PORT:-3311}
 setsid npx tsx scripts/fake-clamd.ts "$CLAM_PORT" > "$WORK/clamd.log" 2>&1 & CLAM=$!
 for _ in $(seq 1 30); do grep -q "fake clamd" "$WORK/clamd.log" && break; sleep 1; done
 export CLAMD_HOST=127.0.0.1 CLAMD_PORT=$CLAM_PORT TRUSTED_PROXY_HOPS=0
-setsid node_modules/.bin/next dev -p "$WEB_PORT" > "$WORK/server.log" 2>&1 & SRV=$!
+fresh_next; setsid node_modules/.bin/next dev -p "$WEB_PORT" > "$WORK/server.log" 2>&1 & SRV=$!
 for _ in $(seq 1 90); do curl -s -o /dev/null "http://127.0.0.1:$WEB_PORT/api/health" && break; sleep 1; done
 B="http://127.0.0.1:$WEB_PORT"
 code() { curl -s -o /dev/null -w "%{http_code}" "$@"; }
@@ -55,6 +55,21 @@ expect "same file again -> 200 and skipped" 200 "$(code -F "file=@$WORK/fs.txt" 
 printf 'MZ\x90\x00\x03\x00\x00\x00' > "$WORK/evil.pdf"; expect "executable named .pdf -> 415" 415 "$(code -F "file=@$WORK/evil.pdf" -F docType=bank_statement "$B/api/applications/$CASE/documents")"
 printf '%%PDF-1.7\n1 0 obj<<>>endobj\n' > "$WORK/real.pdf"; expect "real pdf -> 202 manual review" 202 "$(code -F "file=@$WORK/real.pdf" -F docType=bank_statement "$B/api/applications/$CASE/documents")"
 expect "unknown case -> 404" 404 "$(code -F "file=@$WORK/fs.txt" -F docType=financial_statement "$B/api/applications/00000000-0000-4000-8000-000000000000/documents")"
+
+# asynchronous upload and live progress (D-039)
+printf 'Statement period ending: 2026-09-30\nBeginning balance: $10,000.00\nTotal deposits: $5,000.00\nTotal withdrawals: $3,000.00\nEnding balance: $12,000.00\n' > "$WORK/bank.txt"
+RA=$(curl -s -w "\n%{http_code}" -F "file=@$WORK/bank.txt" -F docType=bank_statement "$B/api/applications/$CASE/documents?async=1")
+expect "async upload -> 202" 202 "$(echo "$RA" | tail -1)"; expect "async upload reports queued" 1 "$(echo "$RA" | head -1 | grep -c '"queued":true')"
+for _ in $(seq 1 30); do LV=$(curl -s "$B/api/cases/$CASE/live"); echo "$LV" | grep -q '"active":false' && break; sleep 1; done
+expect "live: processing finished by itself" 1 "$(echo "$LV" | grep -c '"active":false')"
+expect "live: no document left waiting, processing or failed" 0 "$(echo "$LV" | grep -o '"processing":"[a-z]*"' | grep -vc '"done"' || true)"
+ACC=$(echo "$LV" | grep -o '"accepted":[0-9]*' | head -1 | cut -d: -f2); expect "live: the bank statement's facts were accepted" 1 "$([ "${ACC:-0}" -ge 11 ] && echo 1 || echo 0)"
+expect "live: carries no business name or figures" 0 "$(echo "$LV" | grep -c 'Harbor\|Net income\|210,000' || true)"
+expect "live: a version is present" 1 "$(echo "$LV" | grep -c '"version":"[0-9a-f]\{16\}"')"
+expect "live: unknown case -> 404" 404 "$(code "$B/api/cases/00000000-0000-4000-8000-000000000000/live")"
+expect "live: not a case id -> 404" 404 "$(code "$B/api/cases/not-a-uuid/live")"
+expect "queue live -> 200" 200 "$(code "$B/api/queue/live")"
+expect "review page lists document processing" 1 "$(curl -s "$B/review/$CASE" | grep -c 'Document processing')"
 # upload hardening: name must match content, no markup, no active PDF, malware scan, fail closed
 printf '%%PDF-1.7\n1 0 obj<<>>endobj\n' > "$WORK/mismatch.png"; expect "pdf content named .png -> 415" 415 "$(code -F "file=@$WORK/mismatch.png" -F docType=bank_statement "$B/api/applications/$CASE/documents")"
 printf '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>' > "$WORK/x.txt"; expect "svg named .txt -> 415" 415 "$(code -F "file=@$WORK/x.txt" -F docType=financial_statement "$B/api/applications/$CASE/documents")"
@@ -107,11 +122,11 @@ expect "a second delivery run delivers nothing" 1 "$(curl -s -X POST "$B/api/out
 expect "one application stored" 1 "$(psqlx -c "select count(*) from applications")"
 expect "EIN is not plaintext in the database" 0 "$(psqlx -c "select count(*) from applications where encode(ein_ciphertext,'escape') like '%3456789%'")"
 expect "only last4 stored in the clear" 6789 "$(psqlx -c "select ein_last4 from applications")"
-expect "6 accepted facts, all cited" 6 "$(psqlx -c "select count(*) from facts where case_id='$CASE' and status='accepted' and page=1 and length(passage)>0")"
+expect "11 accepted facts (6 statement, 5 bank), all cited" 11 "$(psqlx -c "select count(*) from facts where case_id='$CASE' and status='accepted' and page=1 and length(passage)>0")"
 expect "manual-review exception for the pdf" 1 "$(psqlx -c "select count(*) from exceptions where case_id='$CASE' and kind='ocr_required'")"
 expect "rule run recorded with 11 results and one verified memo" "1 11 1" "$(psqlx -c "select (select count(*) from rule_runs where case_id='$CASE')||' '||(select count(*) from rule_results where case_id='$CASE')||' '||(select count(*) from memos where case_id='$CASE')")"
 expect "missing documents are flagged by rule" 1 "$(psqlx -c "select count(*) from exceptions where case_id='$CASE' and kind='rule:required-documents'")"
-expect "2 stored objects, none readable as plaintext" "2 0" "$(echo "$(objcount) $(plaincount)")"
+expect "3 stored objects, none readable as plaintext" "3 0" "$(echo "$(objcount) $(plaincount)")"
 CH=$(PGPASSWORD=uw_app_dev psql -h "$H" -p "$PORT" -U uw_app -d $DB -tAq -c "select set_config('app.tenant_id','$T',false)" -c "select coalesce(audit_verify_chain()::text,'intact')" | tail -1)
 expect "audit chain verifies" intact "$CH"
 expect "form post to a json route -> 415" 415 "$(code -X POST "$B/api/applications" -d 'a=1')"

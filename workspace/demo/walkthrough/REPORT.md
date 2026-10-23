@@ -1,6 +1,6 @@
 # Walkthrough report
 
-Run 2026-10-22T22:34:21.145Z on a fresh local stack (database, fake identity provider, web app). Synthetic data only. Screenshots are in this folder.
+Run 2026-10-23T20:59:02.203Z on a fresh local stack (database, fake identity provider, web app). Synthetic data only. Screenshots are in this folder.
 
 | # | Step | Result |
 |---|---|---|
@@ -9,13 +9,13 @@ Run 2026-10-22T22:34:21.145Z on a fresh local stack (database, fake identity pro
 | 3 | viewer signs in through the identity provider | pass |
 | 4 | admin signs in through the identity provider | pass |
 | 5 | processor submits the application form for clean (Copper Dental Group PC) | pass |
-| 6 | clean: 6 documents uploaded through the case page | pass |
+| 6 | clean: 6 documents uploaded through the case page, processed in the background, and shown live without a reload | pass |
 | 7 | clean: file built from the case page (rules run, memo drafted, nothing approved) | pass |
 | 8 | processor submits the application form for arith (Granite Dental Group PC) | pass |
-| 9 | arith: 6 documents uploaded through the case page | pass |
+| 9 | arith: 6 documents uploaded through the case page, processed in the background, and shown live without a reload | pass |
 | 10 | arith: file built from the case page (rules run, memo drafted, nothing approved) | pass |
 | 11 | processor submits the application form for injection (Harbor Plumbing LLC) | pass |
-| 12 | injection: 6 documents uploaded through the case page | pass |
+| 12 | injection: 6 documents uploaded through the case page, processed in the background, and shown live without a reload | pass |
 | 13 | injection: file built from the case page (rules run, memo drafted, nothing approved) | pass |
 | 14 | the queue lists all three businesses with their open exceptions | pass |
 | 15 | processor cannot record a decision (403) | pass |
@@ -46,4 +46,5 @@ Run 2026-10-22T22:34:21.145Z on a fresh local stack (database, fake identity pro
 | 40 | after signing out, protected pages send the browser back to the identity provider | pass |
 
 ## Gaps noticed while running it
-- none
+- browser error: Processor: Failed to load resource: the server responded with a status of 404 (Not Found)
+- browser error: Processor: Failed to load resource: the server responded with a status of 403 (Forbidden)

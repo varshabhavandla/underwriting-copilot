@@ -5,6 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/lib/bgstart.sh
 . scripts/lib/killport.sh
+. scripts/lib/devserver.sh
 : "${UW_TEST_ADMIN_URL:?set UW_TEST_ADMIN_URL}"
 PORT_WEB=${WEB_PORT:-3000}
 npm run demo >/dev/null
@@ -20,4 +21,5 @@ export DATABASE_URL="postgres://uw_app:uw_app_dev@$HP/uw_demo" UPLOAD_DIR="$PWD/
   OIDC_ISSUER="$ISS" OIDC_CLIENT_ID=uw-client OIDC_CLIENT_SECRET="$SECRET" OIDC_REDIRECT_URI="http://127.0.0.1:$PORT_WEB/api/auth/callback"
 # next dev, not next start: production mode requires https identity-provider URLs and refuses the development fake provider setup, by design
 echo "Demo ready: http://127.0.0.1:$PORT_WEB/  (you will be sent to the fake sign-in page; choose a role). Ctrl-C to stop."
+fresh_next
 npx next dev -p "$PORT_WEB"

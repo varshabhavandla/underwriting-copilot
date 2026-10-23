@@ -13,6 +13,9 @@ const common = [
 
 const config: NextConfig = {
   poweredByHeader: false,
+  // development only: the dev server serves its scripts and hot-reload socket to localhost by default, but the demo and tests browse via 127.0.0.1, where client scripts
+  // (live updates) would otherwise be silently blocked. Has no effect in a production build.
+  allowedDevOrigins: ["127.0.0.1"],
   // the console's upload form posts files through a server action; the default 1 MB limit is below our 4 MB upload cap
   experimental: { serverActions: { bodySizeLimit: "4.5mb" } },
   async headers() {
