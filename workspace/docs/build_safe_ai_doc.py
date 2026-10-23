@@ -140,6 +140,7 @@ def table(headers, rows, widths):
             if k % 2 == 1: shade(cells[i], ZEBRA)
             r = cells[i].paragraphs[0].add_run(v); set_font(r, 9, i == 0, INK)
             cells[i].paragraphs[0].paragraph_format.line_spacing = 1.1; cells[i].paragraphs[0].paragraph_format.space_after = Pt(0)
+    for i, w in enumerate(widths): t.columns[i].width = Inches(w)
     for k, row in enumerate(t.rows):
         trPr = row._tr.get_or_add_trPr(); trPr.append(OxmlElement("w:cantSplit"))
         if k == 0: trPr.append(OxmlElement("w:tblHeader"))
@@ -148,57 +149,68 @@ def table(headers, rows, widths):
 
 
 d.add_paragraph("Safe AI for Commercial Loan Underwriting", style="Title")
-box("Executive summary:",
-    "Underwriting Copilot prepares commercial loan files for a human underwriter, starting with SBA 7(a) loans. It reads the application and the supporting "
-    "documents, ties every figure to the page it came from, runs eleven rules taken from SBA SOP 50 10, flags what is missing or wrong, and drafts a cited "
-    "credit memo. The underwriter then reviews the file and makes the decision. The software cannot approve, decline or rank a borrower, and the database enforces this.")
+P("Reference Architecture & Compliance Overview: Underwriting Copilot", size=11, color=ACC, after=8)
+box("Executive Summary:",
+    "Underwriting Copilot is an AI-assisted commercial loan preparation platform designed for SBA 7(a) and commercial lenders. It aims to reduce manual file assembly "
+    "while enforcing deterministic rules, strict human-in-the-loop decisioning, sourced figures and tamper-evident auditing.")
 
-H1("1. The operational challenge")
-P("Before an underwriter can judge whether a business is a sound credit, someone must read the tax returns, bank statements and financial statements, key the figures "
-  "into a spreadsheet, check that the totals reconcile, compare the file against program rules such as SBA SOP 50 10, and draft the memo. This preparation is where "
-  "time goes, and where tired eyes mistype a number or miss a document.")
-P("Underwriting Copilot targets that preparation. It is built as a careful assistant, not a black box: it shows its sources, lists what it did not check, and leaves "
-  "the judgment to the underwriter. The aim is to give underwriters back time for the credit decision. That benefit is our hypothesis and has not been measured on real files.")
+H1("1. The Operational Challenge in Commercial Lending")
+P("Commercial loan underwriting traditionally demands hours of manual file preparation before credit risk assessment can even begin. Underwriters spend significant time "
+  "reading tax returns, financial statements and bank records, manually keying figures into spreadsheets, verifying reconciliation, matching compliance criteria against complex "
+  "government regulations (for example SBA SOP 50 10), and drafting credit memos.")
+P("This manual preparation phase is where human errors, such as missed document anomalies or mistyped figures, frequently occur. Underwriting Copilot automates file assembly so "
+  "underwriters receive prepared loan files, with problems already flagged, ready for their review. The time saved is our hypothesis and has not been measured on real files.")
 
-H1("2. Five safeguards, explained")
-bullets([("A person decides, and the database enforces it. ",
-          "The database refuses to record a decision unless it comes from someone acting as an underwriter, and refuses to approve past an open critical or high exception "
-          "without a written override. A bug in a screen or an integration cannot approve a loan. The software never ranks or scores borrowers."),
-         ("Every figure is sourced. ",
-          "Each figure appears beside the document, page and quoted passage it came from, so a number can be checked in seconds. A fact without a citation is rejected. "
-          "Accepted means faithfully extracted from the document, not true in the real world, and the screen says so."),
-         ("Rules are code, and unknowns are surfaced. ",
-          "Eleven rules each cite their SOP 50 10 section. A rule that cannot be evaluated returns needs-review and never passes silently. Every run lists what was not evaluated."),
-         ("Documents cannot give orders. ",
-          "Text inside a document is treated as data to read, never as instructions. Text that looks like an instruction raises a critical exception, and the facts from that "
-          "document are held for a person. No document-reading step can decide or write a decision."),
-         ("A tamper-evident record, and separated lenders. ",
-          "Every state change, extraction, rule result and human action goes into an append-only log in which each entry depends on the one before, and the database can check the "
-          "chain on demand. Each lender's rows are kept apart by the database itself, so application bugs cannot read across lenders.")])
+H1("2. Architectural Pillars of Safe AI")
+P("Unlike black-box generative AI models that produce unverified summaries or risk autonomous errors, Underwriting Copilot uses a rules-first, safety-first architecture "
+  "built around five pillars:")
+bullets([("Database-Level Human-in-the-Loop Enforcement: ",
+          "The system cannot approve, decline or rank borrowers autonomously. The human-decision requirement is enforced by database rules, so errors in application code or "
+          "external integrations cannot record a decision. Approving past an open critical or high exception also needs a written override."),
+         ("Every Figure Sourced & Cited: ",
+          "Extracted figures are linked directly to their source document, page number and quoted passage. Uncited facts are automatically rejected, allowing underwriters to verify "
+          "numbers in seconds. Accepted means faithfully extracted, not verified true in the real world."),
+         ("SBA SOP 50 10 Compliance Rules Engine: ",
+          "Applies 11 SBA SOP 50 10 rules, each citing its section. Unresolved edge cases or discrepancies are surfaced directly to the human underwriter rather than silently skipped."),
+         ("Prompt Injection & Document Shielding (\u201cDocuments Can\u2019t Talk Back\u201d): ",
+          "Text within uploaded borrower documents is treated strictly as passive data, never as instructions to the model. Adversarial text or prompt-injection attempts designed to "
+          "manipulate AI readers are flagged as critical exceptions and the facts from that document are held for a person."),
+         ("Tamper-Evident Hash-Chained Audit Trail: ",
+          "Every workflow state, extraction, rule evaluation and human action is recorded in an append-only, hash-chained ledger, giving examiners a record they can check for alteration.")])
 
-H1("3. The workflow, stage by stage")
-P("Every file passes through the same eight stages. The only stage where a decision is made is stage 6.")
-d.add_picture(str(here / "img" / "workflow.png"), width=Inches(5.9))
-table(["Stage", "What happens", "Safety control"], [
-    ["1  Intake", "A processor enters the borrower and the loan request.", "The tax ID (EIN) is encrypted. Only the last four digits are ever shown."],
-    ["2  Documents", "Tax returns, bank statements and financial statements are uploaded.", "Name must match content; markup and active PDFs are refused; a malware scan must pass, and the upload is refused if the scanner cannot be reached."],
-    ["3  Extraction with citations", "Figures such as revenue and balances are read from the documents.", "Every accepted fact keeps its document, page and quoted passage. A fact without a citation is rejected."],
-    ["4  Rules", "Eleven SBA SOP 50 10 rules run on the accepted facts. Seven always apply; four apply conditionally.", "A rule that cannot be evaluated returns needs-review. It never passes silently."],
-    ["5  Memo draft", "A credit memo is drafted from accepted facts.", "Every line is cited and its numbers are checked against the cited source. The memo cannot contain approve or decline language."],
-    ["6  Human decision", "The underwriter reviews, adopts or edits the memo, disposes each exception with a note, and approves, declines or returns the file.", "Only an underwriter can record a decision. Approving past an open critical or high exception needs a written override. A decided case is final."],
-    ["7  Handoff", "An approved file is queued for the servicing system.", "Delivery goes through a signed, retried outbox. The servicing system is a mock for now."],
-    ["8  Audit", "Every step is recorded.", "An append-only, hash-chained log that the database can verify."],
-], [1.45, 2.45, 2.7])
+H1("3. End-to-End Underwriting Workflow Stages")
+P("Loan files move from initial intake to a prepared, reviewed and decided state through seven structured stages.")
+table(["Stage", "Workflow Step", "Key System Operations & Safety Controls"], [
+    ["1", "Intake", "Application intake with sensitive-identifier protection. The tax ID (EIN) is encrypted, and only the last four digits are exposed in the interface."],
+    ["2", "Documents", "Malware scanning is required before any processing, and an upload is refused if the scanner cannot be reached. Name must match content; markup and active PDFs are refused. Documents are stored encrypted and scoped to the lender."],
+    ["3", "Extraction + Citations", "Extraction of financial figures. Every fact is cited with source document, page and passage. Uncited facts are rejected."],
+    ["4", "Rules Evaluation", "11 SBA SOP 50 10 compliance rules are evaluated automatically. Unknowns and exceptions are flagged for human review."],
+    ["5", "Memo Drafting", "Draft credit memo generated with embedded source citations. Every figure is checked against its cited source, and the memo cannot contain approve or decline language."],
+    ["6", "Human Decision", "The underwriter reviews, edits or adopts the memo and disposes each exception. Only underwriters can approve, decline or return files; approving past an open critical or high exception needs a written override, and a decided case is final."],
+    ["7", "Servicing Handoff and Audit", "The final decision is recorded in the append-only ledger and queued, through a signed and retried outbox, to the servicing system. The servicing system is a mock adapter today."],
+], [0.55, 1.55, 4.5])
+H1("4. Security, Isolation & Auditability")
+bullets([("Multi-Tenant Isolation: ",
+          "Tenant separation is enforced at the database layer rather than purely in application code, so an application bug cannot read across lenders. Tests that attempt "
+          "cross-lender reads confirm they are denied."),
+         ("Tamper-Evident Audit Ledger: ",
+          "Instead of basic event logging, Underwriting Copilot uses a hash-chained, append-only ledger. An examiner can run the chain check to see whether past decisions, rules or "
+          "document versions were altered. Whether a given examiner accepts it as evidence is for the lender and the examiner to decide."),
+         ("Standard Technology Stack: ",
+          "Built on standard, well-supported infrastructure (TypeScript, Next.js, PostgreSQL) without exotic dependencies, which should make review by internal risk and IT teams "
+          "straightforward. The one component that is not deterministic is the AI model, which sits behind a single gateway and whose answers are checked against the source text."),
+         ("Sign-in and roles: ",
+          "OpenID Connect through the lender's own identity provider, four roles (processor, underwriter, viewer, admin), and sessions that can be ended at once.")])
 
-H1("4. Architecture")
-P("A web application is what people use. A database holds the data and enforces the most important rules itself. A malware scanner checks uploads. Outside services read "
-  "documents and receive approved files. Items marked as stand-in are not real yet.")
-d.add_picture(str(here / "img" / "architecture.png"), width=Inches(5.9))
-bullets([("Technology: ", "TypeScript, Next.js and React for screens and server; PostgreSQL 16 for data. Standard, widely supported components."),
-         ("Sign-in: ", "OpenID Connect through the lender's own identity provider, four roles (processor, underwriter, viewer, admin), and sessions that can be ended at once."),
-         ("Model access: ", "all model calls go through one gateway that redacts identifiers first and checks every answer against the source text. Model-stated confidence never decides whether a fact is accepted.")])
+d.add_page_break()
+H1("5. Workflow and architecture diagrams")
+P("The workflow as a diagram. The audit record runs through every stage and is drawn as its own box (8). Stage 6 is the only place a decision is made.", after=4)
+d.add_picture(str(here / "img" / "workflow.png"), width=Inches(5.6))
+P("How the pieces fit together. A web application is what people use. A database holds the data and enforces the most important rules itself. A malware scanner checks uploads. "
+  "Outside services read documents and receive approved files. Items marked as stand-in are not real yet.", after=4)
+d.add_picture(str(here / "img" / "architecture.png"), width=Inches(5.6))
 
-H1("5. What we have measured, and the standards we map to")
+H1("6. What we have measured, and the standards we map to")
 table(["Item", "Result", "How to read it"], [
     ["Automated tests", "454 pass, including real-database tests", "Measured"],
     ["Browser walkthrough of the whole workflow", "40 of 40 steps pass with four roles and three files; also runs in the automated build on GitHub", "Measured, synthetic data"],
@@ -208,17 +220,16 @@ table(["Item", "Result", "How to read it"], [
     ["NIST AI RMF", "72 subcategories: 9 addressed, 40 partial, 22 gaps, 1 not applicable", "Our own assessment"],
 ], [2.1, 3.0, 1.5])
 
-H1("6. What this does not do yet")
+H1("7. What this does not do yet")
 bullets(["No real documents or lenders have been tested, so accuracy on real paperwork is unknown. A stand-in model is used, and scanned or image-only documents cannot be read yet.",
          "No time saving has been measured. A timed comparison with two underwriters is planned.",
          "Several checks are not built: eligibility, collateral, tax transcripts, personal financial statements, credit reports and global cash flow. Debt service uses only the new loan and a placeholder rate.",
          "Nothing is deployed, and no identity provider or hosting has been chosen.",
-         "No outside penetration test, SOC 2 report or lender vendor review exists. Items for legal and compliance review are listed separately. Nothing in this document is legal advice.",
-         "The audit log makes tampering detectable. Whether an examiner accepts it as evidence is for the lender and its examiner to decide."])
+         "No outside penetration test, SOC 2 report or lender vendor review exists. Items for legal and compliance review are listed separately. Nothing in this document is legal advice."])
 
-H1("7. Summary")
-P("Underwriting Copilot is designed so that speed never costs control. It prepares the file, sources every figure and applies the SBA rules, while the decision, the override and the "
-  "record all stay with people and are enforced by the database.")
+H1("8. Summary")
+P("Underwriting Copilot is designed so that speed never costs control. It prepares the file, sources every figure and applies the SBA rules, while the decision, the "
+  "override and the record all stay with people and are enforced by the database.")
 box("Key takeaways.", "", [
     "Efficiency without a black box: every figure links to its page and passage.",
     "Mandatory human decision: software cannot approve, decline or rank, and the database refuses it.",
