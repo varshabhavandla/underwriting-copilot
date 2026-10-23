@@ -160,8 +160,8 @@ try {
   step("arithmetic-error file shows the planted exception", t.includes("bank_arithmetic"), t.slice(0, 200));
   await shot(uw.page, "arith-file-exceptions");
   await uw.page.check("input[value=approve]"); await uw.page.fill("textarea[name=reasons]", "Looks fine"); await act(uw.page, () => uw.page.click("button:has-text('Record decision')"));
+  for (let i = 0; i < 100 && !(await body(uw.page)).includes("override"); i++) await sleep(100); // the refusal banner arrives with the re-rendered page, which can lag the POST on a slow runner
   t = await body(uw.page);
-  const gated = t.includes("requires at least one recorded override") || t.includes("Status: approved") === false;
   step("approving with an open high-severity exception and no override is refused", t.includes("override") && !t.includes("Status: approved"), t.slice(0, 200));
   await shot(uw.page, "arith-file-refused");
   await uw.page.check("input[value=decline]"); await uw.page.fill("textarea[name=reasons]", "Bank statement does not reconcile\nRequest corrected statements before resubmission"); await act(uw.page, () => uw.page.click("button:has-text('Record decision')"));
