@@ -40,7 +40,7 @@ def workflow():
         box(ax, x, y, cw, ch, NAVY if human else LIGHT)
         ax.add_patch(plt.Circle((x + 0.35, y + ch - 0.4), 0.22, fc=TEAL, ec=TEAL))
         ax.text(x + 0.35, y + ch - 0.4, num, ha="center", va="center", color="white", fontsize=11, fontweight="bold")
-        ax.text(x + 0.7, y + ch - 0.4, title, ha="left", va="center", color="white" if human else NAVY, fontsize=11, fontweight="bold")
+        ax.text(x + 0.7, y + ch - 0.4, title, ha="left", va="center", color="white" if human else NAVY, fontsize=11 if len(title) <= 16 else 9.2, fontweight="bold")
         yy = y + ch - 0.95
         for p in pts:
             import textwrap
