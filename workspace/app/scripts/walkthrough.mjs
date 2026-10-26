@@ -75,6 +75,8 @@ async function applyViaForm(page, legalName) {
   return { caseId: u.searchParams.get("submitted"), error: u.searchParams.get("error") };
 }
 const body = (page) => page.innerText("body");
+/** The page text once it satisfies `ok`, or what it holds after 15 seconds. A server action's result is re-rendered after the POST returns, which a slow runner shows. */
+async function bodyWhen(page, ok) { let t = await body(page); for (let i = 0; i < 150 && !ok(t); i++) { await sleep(100); t = await body(page); } return t; }
 
 try {
   // ---- A. staff sign in
@@ -149,7 +151,7 @@ try {
   }
   step(`underwriter disposes the open exceptions with notes (${disposed})`, disposed >= 1 && (await body(uw.page)).includes("Exceptions (0 open)"));
   await uw.page.check("input[value=approve]"); await uw.page.fill("textarea[name=reasons]", "Cash flow supports the request; documents consistent"); await act(uw.page, () => uw.page.click("button:has-text('Record decision')"));
-  t = await body(uw.page);
+  t = await bodyWhen(uw.page, (x) => x.includes("Decision recorded: approved") || x.includes("Status: approved"));
   step("underwriter approves the clean file", t.includes("Decision recorded: approved") || t.includes("Status: approved"), t.slice(0, 160));
   await shot(uw.page, "clean-file-approved");
 
@@ -160,12 +162,11 @@ try {
   step("arithmetic-error file shows the planted exception", t.includes("bank_arithmetic"), t.slice(0, 200));
   await shot(uw.page, "arith-file-exceptions");
   await uw.page.check("input[value=approve]"); await uw.page.fill("textarea[name=reasons]", "Looks fine"); await act(uw.page, () => uw.page.click("button:has-text('Record decision')"));
-  for (let i = 0; i < 100 && !(await body(uw.page)).includes("override"); i++) await sleep(100); // the refusal banner arrives with the re-rendered page, which can lag the POST on a slow runner
-  t = await body(uw.page);
+  t = await bodyWhen(uw.page, (x) => x.includes("override"));
   step("approving with an open high-severity exception and no override is refused", t.includes("override") && !t.includes("Status: approved"), t.slice(0, 200));
   await shot(uw.page, "arith-file-refused");
   await uw.page.check("input[value=decline]"); await uw.page.fill("textarea[name=reasons]", "Bank statement does not reconcile\nRequest corrected statements before resubmission"); await act(uw.page, () => uw.page.click("button:has-text('Record decision')"));
-  step("underwriter declines it with written reasons", (await body(uw.page)).includes("declined"));
+  step("underwriter declines it with written reasons", (await bodyWhen(uw.page, (x) => x.includes("declined"))).includes("declined"));
 
   // ---- F. the file with injected instructions: critical exception, approval needs a written override
   await gotoCase(cases.injection);
@@ -173,7 +174,7 @@ try {
   step("injected-instruction file is flagged critical and its facts were held for review", t.includes("injection_suspected") && /critical/.test(t));
   await shot(uw.page, "injection-file");
   await uw.page.check("input[value=approve]"); await uw.page.fill("textarea[name=reasons]", "Figures re-checked by hand against the source"); await uw.page.fill("textarea[name=overrides]", "injection_suspected: underwriter re-verified every figure manually"); await act(uw.page, () => uw.page.click("button:has-text('Record decision')"));
-  step("approval with a written override is recorded", (await body(uw.page)).includes("approved"));
+  step("approval with a written override is recorded", (await bodyWhen(uw.page, (x) => x.includes("approved"))).includes("approved"));
   await shot(uw.page, "injection-file-approved");
 
   // ---- G. handoff to the (mock) servicing system after human approval only
