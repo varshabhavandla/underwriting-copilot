@@ -45,6 +45,9 @@ async function signIn(label) {
   page.on("pageerror", (e) => browserErrors.push(`${label}: ${String(e).slice(0, 160)}`));
   page.on("console", (m) => { if (m.type() === "error") browserErrors.push(`${label}: ${m.text().slice(0, 160)}`); });
   await gotoSafe(page, `${base}/review`);
+  await until(page, (u) => u.origin === base && u.pathname === "/signin");
+  await page.click('a:has-text("Continue to sign in")');
+  await until(page, (u) => u.origin !== base);
   await page.click(`a:has-text("${label}")`);
   await until(page, (u) => u.origin === base && ["/review", "/forbidden"].includes(u.pathname));
   await idle(page);
@@ -216,8 +219,11 @@ try {
   await gotoSafe(uw.page, `${base}/review`); await uw.page.click("button:has-text('Sign out')"); await until(uw.page, (u) => u.pathname === "/signed-out");
   step("clicking Sign out lands on a plain signed-out page (no redirect chain)", new URL(uw.page.url()).pathname === "/signed-out" && (await body(uw.page)).includes("You are signed out"));
   await shot(uw.page, "signed-out");
-  await gotoSafe(uw.page, `${base}/review`); await until(uw.page, (u) => u.origin !== base);
-  step("after signing out, protected pages send the browser back to the identity provider", new URL(uw.page.url()).origin !== base);
+  await gotoSafe(uw.page, `${base}/review`); await until(uw.page, (u) => u.origin === base && u.pathname === "/signin");
+  step("after signing out, protected pages send the browser to the portal sign-in page", new URL(uw.page.url()).pathname === "/signin");
+  await shot(uw.page, "sign-in");
+  await uw.page.click('a:has-text("Continue to sign in")'); await until(uw.page, (u) => u.origin !== base);
+  step("and its button leads on to the identity provider", new URL(uw.page.url()).origin !== base);
 } catch (e) {
   console.error(e); failures++; rows.push({ n: ++n, title: "walkthrough crashed", ok: false, detail: String(e).slice(0, 200) });
 } finally {

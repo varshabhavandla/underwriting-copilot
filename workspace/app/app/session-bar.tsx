@@ -13,11 +13,11 @@ export async function SessionBar() {
   }
   if (!who) return null;
   return (
-    <nav style={{ display: "flex", gap: 12, justifyContent: "flex-end", alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+    <nav className="nav">
       <Link href="/review">Files</Link>
       {who.role === "admin" ? <Link href="/admin/users">Admin</Link> : null}
       <Link href="/account">Your sessions</Link>
-      <span>Signed in ({who.role})</span>
+      <span className="who">Signed in ({who.role})</span>
       <form action="/api/auth/logout" method="post"><button type="submit">Sign out</button></form>
     </nav>
   );

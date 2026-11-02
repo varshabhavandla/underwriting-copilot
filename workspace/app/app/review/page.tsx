@@ -15,7 +15,7 @@ export default async function Review() {
   return (
     <main>
       <h1>Files for review</h1>
-      <p>The tool prepares files. Only an underwriter decides.</p>
+      <p className="lede">The tool prepares files. Only an underwriter decides.</p>
       <LiveRefresh url="/api/queue/live" version={live.version} active={live.active} />
       <table cellPadding={6}>
         <thead><tr><th align="left">Business</th><th align="left">Amount</th><th align="left">Status</th><th align="left">Open exceptions</th><th align="left">Memo</th></tr></thead>
@@ -24,8 +24,8 @@ export default async function Review() {
             <tr key={r.id}>
               <td><Link href={`/review/${r.id}`}>{r.legal_name ?? r.case_ref}</Link></td>
               <td>{usd(r.loan_amount_cents)}</td>
-              <td>{r.status}{(processing.get(r.id) ?? 0) > 0 ? ` (processing ${processing.get(r.id)})` : ""}</td>
-              <td>critical {r.open_critical} / high {r.open_high} / other {r.open_other}</td>
+              <td><span className={`badge badge-${r.status}`}>{r.status}</span>{(processing.get(r.id) ?? 0) > 0 ? ` (processing ${processing.get(r.id)})` : ""}</td>
+              <td>critical <span className={r.open_critical > 0 ? "sev-crit" : undefined}>{r.open_critical}</span> / high <span className={r.open_high > 0 ? "sev-high" : undefined}>{r.open_high}</span> / other {r.open_other}</td>
               <td>{r.has_memo ? "drafted" : "none"}</td>
             </tr>
           ))}

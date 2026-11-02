@@ -1,11 +1,11 @@
 import { redirect } from "next/navigation";
 import { can, type Action } from "../auth/roles";
-import { authMode, services, type Services } from "./services";
+import { services, type Services } from "./services";
 
 /** For pages and server actions: sends anonymous visitors to sign-in (returning them here) and refuses roles that may not do this. */
 export async function requireSession(action: Action, returnTo: string): Promise<Services> {
   const s = await services();
-  if (!s) redirect(authMode() === "per_tenant" ? `/signin?returnTo=${encodeURIComponent(returnTo)}` : `/api/auth/login?returnTo=${encodeURIComponent(returnTo)}`);
+  if (!s) redirect(`/signin?returnTo=${encodeURIComponent(returnTo)}`);
   if (!can(s.role, action)) redirect("/forbidden");
   return s;
 }

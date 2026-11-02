@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Browser end-to-end check of per-organization single sign-on: two organizations, each with its own (fake) identity provider.
 set -uo pipefail
-cd "$(dirname "$0")/.."; . scripts/lib/killport.sh; . scripts/lib/devserver.sh
+cd "$(dirname "$0")/.."; . scripts/lib/killport.sh; . scripts/lib/devserver.sh; . scripts/lib/bgstart.sh
 cd "$(dirname "$0")/.."
 if [ -z "${UW_TEST_ADMIN_URL:-}" ]; then echo "e2e-sso: set UW_TEST_ADMIN_URL" >&2; exit 2; fi
 if [ -z "${PW_CHROMIUM:-}" ]; then
@@ -21,13 +21,13 @@ export FIELD_KEY_MASTER=$(openssl rand -base64 32) OWNER_DATABASE_URL="postgres:
 CB="http://127.0.0.1:$WEB_PORT/api/auth/callback"
 npx tsx scripts/provision-tenant.ts --name "Acme Bank" --slug acme --admin-email admin@acme.example --issuer "$ISSA" --client-id uw-a --client-secret "$SA" --admin-sub sub-admin > "$WORK/acme.txt" || { echo "FAIL provisioning acme"; exit 1; }
 npx tsx scripts/provision-tenant.ts --name "Beta Bank" --slug beta --admin-email admin@beta.example --issuer "$ISSB" --client-id uw-b --client-secret "$SB" --admin-sub sub-admin > "$WORK/beta.txt" || { echo "FAIL provisioning beta"; exit 1; }
-setsid npx tsx scripts/fake-idp.ts "$PA" uw-a "$SA" "$CB" sub-admin:Admin sub-viewer:Viewer > "$WORK/idpa.log" 2>&1 & IDPA=$!
-setsid npx tsx scripts/fake-idp.ts "$PB" uw-b "$SB" "$CB" sub-admin:Admin > "$WORK/idpb.log" 2>&1 & IDPB=$!
+bgstart npx tsx scripts/fake-idp.ts "$PA" uw-a "$SA" "$CB" sub-admin:Admin sub-viewer:Viewer > "$WORK/idpa.log" 2>&1 & IDPA=$!
+bgstart npx tsx scripts/fake-idp.ts "$PB" uw-b "$SB" "$CB" sub-admin:Admin > "$WORK/idpb.log" 2>&1 & IDPB=$!
 for _ in $(seq 1 30); do curl -s -o /dev/null "$ISSA/.well-known/openid-configuration" && curl -s -o /dev/null "$ISSB/.well-known/openid-configuration" && break; sleep 1; done
 mkdir -p "$WORK/uploads"
 # no DEV_TENANT_ID and no OIDC_* settings: only per-organization sign-in exists
 export DATABASE_URL="postgres://uw_app:uw_app_dev@$HOSTPORT/$DB" UPLOAD_DIR="$WORK/uploads" SSO_MODE=per_tenant APP_ORIGIN="http://127.0.0.1:$WEB_PORT"
-fresh_next; setsid node_modules/.bin/next dev -p "$WEB_PORT" > "$WORK/server.log" 2>&1 & SRV=$!
+fresh_next; bgstart node_modules/.bin/next dev -p "$WEB_PORT" > "$WORK/server.log" 2>&1 & SRV=$!
 for _ in $(seq 1 90); do curl -s -o /dev/null "http://127.0.0.1:$WEB_PORT/api/health" && break; sleep 1; done
 [ -n "${E2E_CURL:-}" ] && { curl -s -i -m 20 "http://127.0.0.1:$WEB_PORT/api/auth/login?org=acme" | head -12 | cut -c1-200; tail -5 "$WORK/server.log" | cut -c1-300; exit 3; }
 SMOKE_ALLOW_HTTP=1 bash scripts/smoke-remote.sh "http://127.0.0.1:$WEB_PORT" || { echo "e2e-sso: FAILED (smoke checks)"; exit 1; }

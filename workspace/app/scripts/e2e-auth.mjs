@@ -16,7 +16,10 @@ async function signIn(sub, label) {
   const page = await ctx.newPage();
   if (process.env.E2E_DEBUG) { page.on("console", (m) => console.log("  [console]", m.text().slice(0, 240))); page.on("framenavigated", (f) => { if (f === page.mainFrame()) console.log("  [nav]", f.url().slice(0, 100)); }); }
   await gotoSafe(page, `${base}/review`);
-  check(`${label}: anonymous visit is sent to the identity provider`, page.url().startsWith(idp));
+  eq(`${label}: anonymous visit is sent to the portal sign-in page`, new URL(page.url()).pathname, "/signin");
+  await page.click('a:has-text("Continue to sign in")');
+  await page.waitForURL((u) => u.href.startsWith(idp), { timeout: 90000 });
+  check(`${label}: and from there to the identity provider`, page.url().startsWith(idp));
   await page.click(`a:has-text("${label}")`);
   // wait for the page, not for network silence: the first compile of each page in the dev server keeps the network busy
   await page.waitForURL((u) => !u.href.startsWith(idp), { timeout: 90000 }); // back on the application, wherever it sent us
@@ -57,7 +60,9 @@ try {
     eq(`anonymous GET ${p} -> 401`, (await fetch(base + p)).status, 401);
   }
   const anon = await fetch(`${base}/review`, { redirect: "manual" });
-  check("anonymous /review redirects to sign-in", anon.status >= 300 && anon.status < 400 && (anon.headers.get("location") ?? "").includes("/api/auth/login"));
+  check("anonymous /review redirects to the portal sign-in page", anon.status >= 300 && anon.status < 400 && (anon.headers.get("location") ?? "").includes("/signin"));
+  const loginHop = await fetch(`${base}/api/auth/login?returnTo=%2Freview`, { redirect: "manual" });
+  check("the sign-in button's target redirects to the identity provider", loginHop.status >= 300 && loginHop.status < 400 && (loginHop.headers.get("location") ?? "").startsWith(idp));
 
   // processor signs in, creates a case
   const proc = await signIn("sub-processor", "Processor");
@@ -120,7 +125,8 @@ try {
   check("a duplicate address is refused with a message", (await adm.page.innerText("body")).includes("already in use"));
   const row = () => adm.page.locator("tr:has-text('newbie@eval.example')");
   const nb0 = await browser.newContext(); const nbp0 = await nb0.newPage();
-  await gotoSafe(nbp0, `${base}/review`); await nbp0.click("a:has-text('Newbie')"); await nbp0.waitForLoadState("networkidle");
+  await gotoSafe(nbp0, `${base}/review`); await nbp0.click('a:has-text("Continue to sign in")'); await nbp0.waitForURL((u) => u.href.startsWith(idp), { timeout: 90000 });
+  await nbp0.click("a:has-text('Newbie')"); await nbp0.waitForLoadState("networkidle");
   eq("a user who is not linked yet cannot sign in", new URL(nbp0.url()).pathname, "/forbidden");
   await row().locator("input[name=subject]").fill("sub-newbie");
   await act(adm.page, () => row().locator("button:has-text('Link')").click());
@@ -137,7 +143,7 @@ try {
   await act(adm.page, () => row().locator("button:has-text('Disable')").click());
   check("admin disables the user", (await adm.page.innerText("body")).includes("User disabled"));
   await gotoSafe(nb.page, `${base}/review`);
-  check("the disabled user's session is dead at once", nb.page.url().startsWith(idp));
+  check("the disabled user's session is dead at once", new URL(nb.page.url()).origin === base && new URL(nb.page.url()).pathname === "/signin");
   await act(adm.page, () => row().locator("button:has-text('Enable')").click());
   await act(adm.page, () => row().locator("button:has-text('Unlink identity')").click());
   check("admin unlinks the identity", (await adm.page.innerText("body")).includes("Identity unlinked"));
@@ -148,7 +154,7 @@ try {
   await act(proc.page, () => proc.page.locator("tr:not(:has-text('(this session)')) button:has-text('End')").first().click());
   check("a user can end another of their own sessions", (await proc.page.innerText("body")).includes("Session ended"));
   await gotoSafe(proc2.page, `${base}/review`);
-  check("and that browser is signed out", proc2.page.url().startsWith(idp));
+  check("and that browser is signed out", new URL(proc2.page.url()).origin === base && new URL(proc2.page.url()).pathname === "/signin");
   eq("the current session keeps working", (await call(proc.page, "GET", "/api/health")).status(), 200);
   // security events
   await gotoSafe(adm.page, `${base}/admin/audit`);
@@ -158,7 +164,7 @@ try {
   check("the event details hold ids and counts only: no email address, provider identifier or token", details.length > 20 && !details.includes("sub-newbie") && !/@/.test(details), details.slice(0, 120));
   // the home page is protected too
   const home = await fetch(`${base}/`, { redirect: "manual" });
-  check("the home page sends anonymous visitors to sign-in", home.status >= 300 && home.status < 400 && (home.headers.get("location") ?? "").includes("/api/auth/login"));
+  check("the home page sends anonymous visitors to sign-in", home.status >= 300 && home.status < 400 && (home.headers.get("location") ?? "").includes("/signin"));
 
   // sessions in the database
   const tok = (await cookieOf(proc.ctx)).value;
@@ -176,7 +182,7 @@ try {
   const replay = await fetch(`${base}/api/applications`, { method: "POST", headers: { "content-type": "application/json", cookie: `__Host-uw_session=${tok}` }, body: JSON.stringify(app) });
   eq("a replayed session cookie after sign-out is refused", replay.status, 401);
   await gotoSafe(proc.page, `${base}/review`);
-  check("after sign-out the browser is sent to sign-in again", proc.page.url().startsWith(idp));
+  check("after sign-out the browser is sent to sign-in again", new URL(proc.page.url()).origin === base && new URL(proc.page.url()).pathname === "/signin");
 
   // cross-site sign-out is refused
   const csrf = await fetch(`${base}/api/auth/logout`, { method: "POST", headers: { origin: "https://evil.example", cookie: `__Host-uw_session=${(await cookieOf(uw.ctx)).value}` }, redirect: "manual" });
@@ -194,7 +200,7 @@ try {
   await owner.begin(async (tx) => { await tx`select set_config('app.tenant_id', ${tenant}, true)`; await tx`update users set disabled_at = now() where role = 'viewer' and tenant_id = ${tenant}`; });
   eq("a disabled user's session stops working immediately", (await call(view.page, 'GET', '/api/health')).status(), 200);
   await gotoSafe(view.page, `${base}/review`);
-  check("and the browser is sent back to sign-in", view.page.url().startsWith(idp));
+  check("and the browser is sent back to sign-in", new URL(view.page.url()).origin === base && new URL(view.page.url()).pathname === "/signin");
 
   // a user the provider knows but we did not provision
   const stranger = await signIn("sub-stranger", "Stranger");
@@ -204,7 +210,7 @@ try {
 
   // tampering with the redirect: wrong state, and a replayed callback
   const t = await browser.newContext(); const tp = await t.newPage();
-  await gotoSafe(tp, `${base}/review`); const authUrl = tp.url();
+  await gotoSafe(tp, `${base}/review`); await tp.click('a:has-text("Continue to sign in")'); await tp.waitForURL((u) => u.href.startsWith(idp), { timeout: 90000 }); const authUrl = tp.url();
   const cb = new URL(authUrl); const back = new URL(cb.searchParams.get("redirect_uri"));
   const go = new URL(authUrl); go.searchParams.set("fake_sub", "sub-underwriter");
   await gotoSafe(tp, go.toString());
@@ -216,7 +222,7 @@ try {
   void back;
   // state mismatch: a flow cookie exists (we were redirected to the provider) but the callback carries a different state
   const sm = await browser.newContext(); const smp = await sm.newPage();
-  await gotoSafe(smp, `${base}/review`);
+  await gotoSafe(smp, `${base}/review`); await smp.click('a:has-text("Continue to sign in")'); await smp.waitForURL((u) => u.href.startsWith(idp), { timeout: 90000 });
   await gotoSafe(smp, `${base}/api/auth/callback?code=whatever&state=attacker-chosen`);
   eq("a callback whose state does not match our flow is refused", new URL(smp.url()).pathname, "/forbidden");
   // Our own structured log lines (JSON); Next's development request logger prints raw URLs and is not part of the application's logging.
