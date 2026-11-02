@@ -2,7 +2,7 @@
 # Runs the whole lending workflow in a real browser against a fresh local stack (database, fake identity provider, web app), as each role, and writes
 # screenshots and a report to ../demo/walkthrough/ (or $WALK_OUT_DIR). Synthetic data only.
 set -uo pipefail
-cd "$(dirname "$0")/.."; . scripts/lib/killport.sh; . scripts/lib/devserver.sh
+cd "$(dirname "$0")/.."; . scripts/lib/killport.sh; . scripts/lib/devserver.sh; . scripts/lib/bgstart.sh
 if [ -z "${UW_TEST_ADMIN_URL:-}" ]; then echo "walkthrough: set UW_TEST_ADMIN_URL" >&2; exit 2; fi
 if [ -z "${PW_CHROMIUM:-}" ]; then
   PWBIN=$(node -e "console.log(require('playwright-core').chromium.executablePath())" 2>/dev/null || true)
@@ -17,11 +17,11 @@ T=$(echo "$SETUP" | sed -n 's/^TENANT=//p')
 npx tsx scripts/walkthrough-packets.ts "$WORK/packets.json" >/dev/null
 OUTDIR="${WALK_OUT_DIR:-$PWD/../demo/walkthrough}"
 mkdir -p "$WORK/uploads" "$OUTDIR"
-setsid npx tsx scripts/fake-idp.ts "$IDP_PORT" uw-client "$SECRET" "http://127.0.0.1:$WEB_PORT/api/auth/callback" sub-admin:Admin sub-processor:Processor sub-underwriter:Underwriter sub-viewer:Viewer > "$WORK/idp.log" 2>&1 & IDP=$!
+bgstart npx tsx scripts/fake-idp.ts "$IDP_PORT" uw-client "$SECRET" "http://127.0.0.1:$WEB_PORT/api/auth/callback" sub-admin:Admin sub-processor:Processor sub-underwriter:Underwriter sub-viewer:Viewer > "$WORK/idp.log" 2>&1 & IDP=$!
 for _ in $(seq 1 30); do curl -s -o /dev/null "$ISS/.well-known/openid-configuration" && break; sleep 1; done
 export DATABASE_URL="postgres://uw_app:uw_app_dev@$HOSTPORT/$DB" UPLOAD_DIR="$WORK/uploads" FIELD_KEY_MASTER=$(openssl rand -base64 32) WORKER_SECRET="$WORKER" \
   OIDC_ISSUER="$ISS" OIDC_CLIENT_ID=uw-client OIDC_CLIENT_SECRET="$SECRET" OIDC_REDIRECT_URI="http://127.0.0.1:$WEB_PORT/api/auth/callback"
-fresh_next; setsid node_modules/.bin/next dev -p "$WEB_PORT" > "$WORK/server.log" 2>&1 & SRV=$!
+fresh_next; bgstart node_modules/.bin/next dev -p "$WEB_PORT" > "$WORK/server.log" 2>&1 & SRV=$!
 for _ in $(seq 1 90); do curl -s -o /dev/null "http://127.0.0.1:$WEB_PORT/api/health" && break; sleep 1; done
 WALK_BASE="http://127.0.0.1:$WEB_PORT" WALK_TENANT="$T" WALK_WORKER="$WORKER" WALK_PACKETS="$WORK/packets.json" WALK_OUT="$OUTDIR" \
   WALK_DB="$(echo "$UW_TEST_ADMIN_URL" | sed -E "s#/[^/]*\$#/$DB#")" WALK_LOG="$WORK/server.log" WALK_UPLOADS="$WORK/uploads" node scripts/walkthrough.mjs

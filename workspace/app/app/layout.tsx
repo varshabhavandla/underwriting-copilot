@@ -1,14 +1,18 @@
 import type { ReactNode } from "react";
 import "./globals.css";
-import { SessionBar } from "./session-bar";
+import { AppShell } from "./app-shell";
+import { BRAND } from "./brand";
 import { TestBanner } from "./test-banner";
 
-export const metadata = { title: "Underwriting Copilot", description: "Prepared files for human underwriters" };
+export const metadata = { title: `${BRAND.company} | ${BRAND.product}`, description: "Prepared files for human underwriters" };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body><div><TestBanner /><SessionBar />{children}</div></body>
+      <body>
+        <TestBanner />
+        <AppShell>{children}</AppShell>
+      </body>
     </html>
   );
 }

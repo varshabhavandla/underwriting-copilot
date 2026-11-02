@@ -177,7 +177,7 @@ export default async function CaseReview({ params, searchParams }: { params: Pro
         {d.exceptions.length === 0 && <p>None.</p>}
         <ul>{d.exceptions.map((e) => (
           <li key={e.id}>
-            <strong>{e.severity}</strong> {e.kind}: {e.detail} {e.status === "disposed" ? <em>(disposed: {e.disposition_note})</em> : (
+            <strong className={`pill pill-${e.severity}`}>{e.severity}</strong> {e.kind}: {e.detail} {e.status === "disposed" ? <em>(disposed: {e.disposition_note})</em> : (
               <form action={dispose} style={{ display: "inline" }}>
                 <input type="hidden" name="caseId" value={caseId} /><input type="hidden" name="exceptionId" value={e.id} />
                 <input name="note" placeholder="disposition note (required)" required /> <button>Dispose</button>
@@ -186,20 +186,20 @@ export default async function CaseReview({ params, searchParams }: { params: Pro
       </section>
 
       <section><h2>Rule results (SBA SOP 50 10)</h2>
-        <table cellPadding={4}><thead><tr><th align="left">Rule</th><th align="left">Outcome</th><th align="left">SOP section</th><th align="left">Detail</th></tr></thead>
-          <tbody>{d.rules.map((r) => <tr key={r.rule_id}><td>{r.rule_id}</td><td>{r.outcome}</td><td>{r.sop_section}</td><td>{r.detail}</td></tr>)}</tbody></table>
+        <div className="table-wrap"><table cellPadding={4}><thead><tr><th align="left">Rule</th><th align="left">Outcome</th><th align="left">SOP section</th><th align="left">Detail</th></tr></thead>
+          <tbody>{d.rules.map((r) => <tr key={r.rule_id}><td>{r.rule_id}</td><td><span className={`pill pill-${r.outcome}`}>{r.outcome}</span></td><td>{r.sop_section}</td><td>{r.detail}</td></tr>)}</tbody></table></div>
         {d.rules.length === 0 && <p>Rules have not been run for this case.</p>}
       </section>
 
       <section><h2>Facts with citations</h2>
-        <table cellPadding={4}><thead><tr><th align="left">Fact</th><th align="left">Value</th><th align="left">Status</th><th align="left">Evidence</th><th align="left">Source passage</th>{!decided && can(s.role, "decide") && <th align="left">Review</th>}</tr></thead>
-          <tbody>{d.facts.map((f) => <tr key={f.id}><td>{f.key}</td><td>{f.value}</td><td>{f.status}</td><td>{f.evidence_score}</td><td>p.{f.page}: “{f.passage}”</td>{!decided && can(s.role, "decide") && (
+        <div className="table-wrap"><table cellPadding={4}><thead><tr><th align="left">Fact</th><th align="left">Value</th><th align="left">Status</th><th align="left">Evidence</th><th align="left">Source passage</th>{!decided && can(s.role, "decide") && <th align="left">Review</th>}</tr></thead>
+          <tbody>{d.facts.map((f) => <tr key={f.id}><td>{f.key}</td><td>{f.value}</td><td><span className={`pill pill-${f.status}`}>{f.status}</span></td><td>{f.evidence_score}</td><td>p.{f.page}: “{f.passage}”</td>{!decided && can(s.role, "decide") && (
             <td>{f.status === "proposed" ? (
               <form action={reviewFactAction} style={{ display: "grid", gap: 4 }}>
                 <input type="hidden" name="caseId" value={caseId} /><input type="hidden" name="factId" value={f.id} />
                 <input name="note" placeholder="note (required to reject)" aria-label={`note for ${f.key}`} />
                 <span><button name="verdict" value="confirm">Confirm against original</button> <button name="verdict" value="reject">Reject</button></span>
-              </form>) : null}</td>)}</tr>)}</tbody></table>
+              </form>) : null}</td>)}</tr>)}</tbody></table></div>
       </section>
 
       <section><h2>Credit memo draft</h2>

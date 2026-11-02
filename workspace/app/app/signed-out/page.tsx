@@ -1,4 +1,4 @@
-import { authMode } from "@/server/services";
+import { AuthShell } from "../auth-shell";
 
 export const dynamic = "force-dynamic";
 
@@ -7,11 +7,11 @@ export const dynamic = "force-dynamic";
  * follows a form submission, so a sign-out that bounced straight on to the identity provider would be blocked and leave a blank page.
  */
 export default function SignedOut() {
-  const href = authMode() === "per_tenant" ? "/signin" : "/api/auth/login?returnTo=%2Freview";
   return (
-    <main>
+    <AuthShell>
       <h1>You are signed out</h1>
-      <p>Your session has ended on this device. <a href={href}>Sign in again</a></p>
-    </main>
+      <p className="sub">Your session has ended on this device.</p>
+      <a className="btn" href="/signin">Sign in again</a>
+    </AuthShell>
   );
 }

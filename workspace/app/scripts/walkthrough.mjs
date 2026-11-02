@@ -45,6 +45,9 @@ async function signIn(label) {
   page.on("pageerror", (e) => browserErrors.push(`${label}: ${String(e).slice(0, 160)}`));
   page.on("console", (m) => { if (m.type() === "error") browserErrors.push(`${label}: ${m.text().slice(0, 160)}`); });
   await gotoSafe(page, `${base}/review`);
+  await until(page, (u) => u.origin === base && u.pathname === "/signin");
+  await page.click('a:has-text("Continue to sign in")');
+  await until(page, (u) => u.origin !== base);
   await page.click(`a:has-text("${label}")`);
   await until(page, (u) => u.origin === base && ["/review", "/forbidden"].includes(u.pathname));
   await idle(page);
@@ -140,7 +143,7 @@ try {
   await shot(uw.page, "clean-file-top");
   await uw.page.locator("h2:has-text('Credit memo draft')").scrollIntoViewIfNeeded(); await shot(uw.page, "clean-file-memo");
   const adopt = uw.page.locator("button:has-text('Adopt this memo')");
-  if (await adopt.count()) { await act(uw.page, () => adopt.click()); step("underwriter adopts the memo draft", (await body(uw.page)).includes("Memo adopted")); } else step("underwriter adopts the memo draft", false, "no adopt button");
+  if (await adopt.count()) { await act(uw.page, () => adopt.click()); step("underwriter adopts the memo draft", (await bodyWhen(uw.page, (x) => x.includes("Memo adopted"))).includes("Memo adopted")); } else step("underwriter adopts the memo draft", false, "no adopt button");
   // dispose each open exception with a note
   let disposed = 0;
   for (let i = 0; i < 6; i++) {
@@ -212,12 +215,34 @@ try {
   const log = readFileSync(process.env.WALK_LOG, "utf8").split("\n").filter((l) => l.startsWith("{")).join("\n");
   step("the server log holds no EIN and no business name", !log.includes("12-3456789") && packets.every((p) => !log.includes(p.legalName)));
 
+  // ---- I2. the dashboard and the platform pages
+  await gotoSafe(uw.page, `${base}/dashboard`); await uw.page.waitForSelector(".kpi-value");
+  step("the dashboard counts the three files from live data", (await uw.page.locator(".kpi-value").first().innerText()).trim() === "3" && (await body(uw.page)).includes("Open exceptions by severity"));
+  await shot(uw.page, "dashboard");
+  for (const [path, text, name] of [["/why-fortech", "Software prepares the file. People decide.", "why-fortech"], ["/how-the-ai-works", "From documents to a cited memo", "how-the-ai-works"], ["/security-trust", "Built to protect lending data", "security-trust"], ["/faq", "Frequently asked questions", "faq"]]) {
+    await gotoSafe(uw.page, `${base}${path}`); await uw.page.waitForSelector("main h1");
+    step(`the ${name} page opens inside the portal`, (await body(uw.page)).includes(text));
+    await shot(uw.page, name);
+  }
+
+  // ---- I3. the admin screens update by themselves
+  await gotoSafe(adm.page, `${base}/admin/audit`); await adm.page.waitForSelector("tbody tr");
+  const eventsShown = await adm.page.locator("tbody tr").count();
+  const newcomer = await signIn("Viewer"); // a new sign-in records a new security event
+  const grew = await adm.page.waitForFunction((n) => document.querySelectorAll("tbody tr").length > n, eventsShown, { timeout: 40000 }).then(() => true, () => false);
+  step("the security events screen shows a new sign-in by itself, without a reload", grew, `${eventsShown} rows before`);
+  await shot(adm.page, "security-events-live");
+  await newcomer.ctx.close();
+
   // ---- J. sign out
   await gotoSafe(uw.page, `${base}/review`); await uw.page.click("button:has-text('Sign out')"); await until(uw.page, (u) => u.pathname === "/signed-out");
   step("clicking Sign out lands on a plain signed-out page (no redirect chain)", new URL(uw.page.url()).pathname === "/signed-out" && (await body(uw.page)).includes("You are signed out"));
   await shot(uw.page, "signed-out");
-  await gotoSafe(uw.page, `${base}/review`); await until(uw.page, (u) => u.origin !== base);
-  step("after signing out, protected pages send the browser back to the identity provider", new URL(uw.page.url()).origin !== base);
+  await gotoSafe(uw.page, `${base}/review`); await until(uw.page, (u) => u.origin === base && u.pathname === "/signin");
+  step("after signing out, protected pages send the browser to the portal sign-in page", new URL(uw.page.url()).pathname === "/signin");
+  await shot(uw.page, "sign-in");
+  await uw.page.click('a:has-text("Continue to sign in")'); await until(uw.page, (u) => u.origin !== base);
+  step("and its button leads on to the identity provider", new URL(uw.page.url()).origin !== base);
 } catch (e) {
   console.error(e); failures++; rows.push({ n: ++n, title: "walkthrough crashed", ok: false, detail: String(e).slice(0, 200) });
 } finally {

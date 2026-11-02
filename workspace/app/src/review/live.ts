@@ -17,7 +17,7 @@ export interface CaseLive {
   decisions: number;
 }
 
-const ver = (o: unknown): string => createHash("sha256").update(JSON.stringify(o)).digest("hex").slice(0, 16);
+export const ver = (o: unknown): string => createHash("sha256").update(JSON.stringify(o)).digest("hex").slice(0, 16);
 
 export async function caseLive(tx: Tx, caseId: string): Promise<CaseLive | null> {
   const [c] = await tx<{ status: string }[]>`select status from cases where id = ${caseId}`;

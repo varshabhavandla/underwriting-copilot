@@ -2,7 +2,7 @@
 # End-to-end check of the running web app against a fresh local database. Exits non-zero on the first mismatch.
 # Needs: UW_TEST_ADMIN_URL (disposable Postgres superuser), psql, curl, openssl.
 set -uo pipefail
-cd "$(dirname "$0")/.."; . scripts/lib/killport.sh; . scripts/lib/devserver.sh
+cd "$(dirname "$0")/.."; . scripts/lib/killport.sh; . scripts/lib/devserver.sh; . scripts/lib/bgstart.sh
 cd "$(dirname "$0")/.."
 : "${UW_TEST_ADMIN_URL:?set UW_TEST_ADMIN_URL}"
 WORK="$(mktemp -d)"; trap '[ -n "${SRV:-}" ] && kill -- -$SRV 2>/dev/null; [ -n "${CLAM:-}" ] && kill -- -$CLAM 2>/dev/null; killport "$WEB_PORT" "${CLAM_PORT:-}"; rm -rf "$WORK"' EXIT
@@ -30,10 +30,10 @@ else
 fi
 # uploads go through a (fake) ClamAV daemon that recognizes only the EICAR test string
 CLAM_PORT=${CLAM_PORT:-3311}
-setsid npx tsx scripts/fake-clamd.ts "$CLAM_PORT" > "$WORK/clamd.log" 2>&1 & CLAM=$!
+bgstart npx tsx scripts/fake-clamd.ts "$CLAM_PORT" > "$WORK/clamd.log" 2>&1 & CLAM=$!
 for _ in $(seq 1 30); do grep -q "fake clamd" "$WORK/clamd.log" && break; sleep 1; done
 export CLAMD_HOST=127.0.0.1 CLAMD_PORT=$CLAM_PORT TRUSTED_PROXY_HOPS=0
-fresh_next; setsid node_modules/.bin/next dev -p "$WEB_PORT" > "$WORK/server.log" 2>&1 & SRV=$!
+fresh_next; bgstart node_modules/.bin/next dev -p "$WEB_PORT" > "$WORK/server.log" 2>&1 & SRV=$!
 for _ in $(seq 1 90); do curl -s -o /dev/null "http://127.0.0.1:$WEB_PORT/api/health" && break; sleep 1; done
 B="http://127.0.0.1:$WEB_PORT"
 code() { curl -s -o /dev/null -w "%{http_code}" "$@"; }
@@ -79,7 +79,7 @@ OBJ0=$(objcount)
 expect "malware test string -> 422" 422 "$(code -F "file=@$WORK/eicar.txt" -F docType=financial_statement "$B/api/applications/$CASE/documents")"
 expect "infected upload stored nothing" "$OBJ0" "$(objcount)"
 expect "and left a rejected audit event" 1 "$(psqlx -c "select count(*) from audit_events where action='document.rejected' and subject->>'reason'='malware'")"
-kill -- -$CLAM 2>/dev/null; sleep 1
+kill -- -$CLAM 2>/dev/null; killport "$CLAM_PORT"; sleep 1
 printf 'Statement text two\n' > "$WORK/two.txt"
 HDR=$(curl -s -D - -o /dev/null -F "file=@$WORK/two.txt" -F docType=financial_statement "$B/api/applications/$CASE/documents" | tr -d '\r')
 expect "scanner down -> 503 (fails closed)" 503 "$(echo "$HDR" | head -1 | awk '{print $2}')"

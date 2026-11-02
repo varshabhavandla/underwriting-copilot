@@ -6,7 +6,7 @@ export function TestBanner() {
   try { on = serverEnv().ALLOW_UNSCANNED_UPLOADS === "test-environment-only"; } catch { return null; }
   if (!on) return null;
   return (
-    <div role="alert" style={{ background: "var(--high)", color: "#000", padding: "6px 12px", margin: "-28px -20px 16px", fontWeight: 600 }}>
+    <div role="alert" style={{ background: "var(--high)", color: "#000", padding: "6px 12px", fontWeight: 600, textAlign: "center" }}>
       TEST ENVIRONMENT. Synthetic data only. Uploads are not malware-scanned.
     </div>
   );
