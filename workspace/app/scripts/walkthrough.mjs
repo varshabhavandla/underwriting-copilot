@@ -215,6 +215,16 @@ try {
   const log = readFileSync(process.env.WALK_LOG, "utf8").split("\n").filter((l) => l.startsWith("{")).join("\n");
   step("the server log holds no EIN and no business name", !log.includes("12-3456789") && packets.every((p) => !log.includes(p.legalName)));
 
+  // ---- I2. the dashboard and the platform pages
+  await gotoSafe(uw.page, `${base}/dashboard`); await uw.page.waitForSelector(".kpi-value");
+  step("the dashboard counts the three files from live data", (await uw.page.locator(".kpi-value").first().innerText()).trim() === "3" && (await body(uw.page)).includes("Open exceptions by severity"));
+  await shot(uw.page, "dashboard");
+  for (const [path, text, name] of [["/why-fortech", "Software prepares the file. People decide.", "why-fortech"], ["/how-the-ai-works", "From documents to a cited memo", "how-the-ai-works"], ["/security-trust", "Built to protect lending data", "security-trust"], ["/faq", "Frequently asked questions", "faq"]]) {
+    await gotoSafe(uw.page, `${base}${path}`); await uw.page.waitForSelector("main h1");
+    step(`the ${name} page opens inside the portal`, (await body(uw.page)).includes(text));
+    await shot(uw.page, name);
+  }
+
   // ---- J. sign out
   await gotoSafe(uw.page, `${base}/review`); await uw.page.click("button:has-text('Sign out')"); await until(uw.page, (u) => u.pathname === "/signed-out");
   step("clicking Sign out lands on a plain signed-out page (no redirect chain)", new URL(uw.page.url()).pathname === "/signed-out" && (await body(uw.page)).includes("You are signed out"));

@@ -63,10 +63,17 @@ try {
   check("anonymous /review redirects to the portal sign-in page", anon.status >= 300 && anon.status < 400 && (anon.headers.get("location") ?? "").includes("/signin"));
   const loginHop = await fetch(`${base}/api/auth/login?returnTo=%2Freview`, { redirect: "manual" });
   check("the sign-in button's target redirects to the identity provider", loginHop.status >= 300 && loginHop.status < 400 && (loginHop.headers.get("location") ?? "").startsWith(idp));
+  for (const p of ["/dashboard", "/why-fortech", "/how-the-ai-works", "/security-trust", "/faq"]) {
+    const r = await fetch(`${base}${p}`, { redirect: "manual" });
+    check(`anonymous ${p} redirects to the portal sign-in page`, r.status >= 300 && r.status < 400 && (r.headers.get("location") ?? "").includes("/signin"));
+  }
 
   // processor signs in, creates a case
   const proc = await signIn("sub-processor", "Processor");
   eq("processor lands on the review queue", new URL(proc.page.url()).pathname, "/review");
+  await gotoSafe(proc.page, `${base}/`); await proc.page.waitForURL((u) => u.pathname === "/dashboard", { timeout: 90000 });
+  eq("the home page of a signed-in user is the dashboard", new URL(proc.page.url()).pathname, "/dashboard");
+  await gotoSafe(proc.page, `${base}/review`);
   const c = await cookieOf(proc.ctx);
   check("session cookie is __Host-, HttpOnly, Secure, SameSite=Lax, path /", Boolean(c && c.httpOnly && c.secure && c.sameSite === "Lax" && c.path === "/" && !c.domain?.startsWith(".")), JSON.stringify(c));
   check("the page cannot read the session cookie", !(await proc.page.evaluate(() => document.cookie)).includes("uw_session"));
