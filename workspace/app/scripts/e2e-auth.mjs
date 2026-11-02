@@ -47,6 +47,7 @@ const call = async (page, method, path, data) => {
   const text = await r.text();
   return { status: () => r.status, json: async () => JSON.parse(text) };
 };
+const liveToken = async (page, path) => (await (await call(page, "GET", path)).json()).version;
 const asTenant = (fn) => owner.begin(async (tx) => { await tx`select set_config('app.tenant_id', ${tenant}, true)`; return fn(tx); });
 const cookieOf = async (ctx) => (await ctx.cookies()).find((c) => c.name === "__Host-uw_session");
 
@@ -56,7 +57,7 @@ try {
   for (const [m, p] of [["POST", "/api/applications"], ["POST", "/api/cases/00000000-0000-4000-8000-000000000000/decision"], ["POST", "/api/cases/00000000-0000-4000-8000-000000000000/build"]]) {
     eq(`anonymous ${m} ${p} -> 401`, (await fetch(base + p, { method: m, headers: { "content-type": "application/json" }, body: "{}" })).status, 401);
   }
-  for (const p of ["/api/queue/live", "/api/cases/00000000-0000-4000-8000-000000000000/live"]) {
+  for (const p of ["/api/queue/live", "/api/cases/00000000-0000-4000-8000-000000000000/live", "/api/admin/users/live", "/api/admin/audit/live", "/api/account/live"]) {
     eq(`anonymous GET ${p} -> 401`, (await fetch(base + p)).status, 401);
   }
   const anon = await fetch(`${base}/review`, { redirect: "manual" });
@@ -119,7 +120,13 @@ try {
     eq(`${label} is refused the user administration screen`, new URL(who.page.url()).pathname, "/forbidden");
     await gotoSafe(who.page, `${base}/admin/audit`);
     eq(`${label} is refused the security events screen`, new URL(who.page.url()).pathname, "/forbidden");
+    for (const p of ["/api/admin/users/live", "/api/admin/audit/live"]) eq(`${label} is refused ${p} (403)`, (await call(who.page, "GET", p)).status(), 403);
   }
+  for (const p of ["/api/admin/users/live", "/api/admin/audit/live", "/api/account/live"]) {
+    const r = await call(adm.page, "GET", p); const j = await r.json().catch(() => ({}));
+    check(`admin can read ${p}, and it carries only a version and an idle flag`, r.status() === 200 && /^[0-9a-f]{16}$/.test(j.version) && j.active === false && Object.keys(j).sort().join() === "active,version", JSON.stringify(j));
+  }
+  eq("a viewer can read their own sessions token (200)", (await call(view.page, "GET", "/api/account/live")).status(), 200);
   await gotoSafe(adm.page, `${base}/admin/users`);
   check("admin sees the user list including themselves", (await adm.page.innerText("body")).includes("admin@eval.example (you)"));
   check("an admin has no role or disable controls on their own row", (await adm.page.locator("tr:has-text('admin@eval.example (you)') select, tr:has-text('admin@eval.example (you)') button").count()) === 0);
@@ -147,8 +154,11 @@ try {
   await act(adm.page, () => row().locator("button:has-text('Set')").click());
   check("admin changes the role", (await adm.page.innerText("body")).includes("Role changed"));
   eq("the role change applies on the very next request, without signing in again", (await call(nb.page, "POST", "/api/applications", app)).status(), 403);
+  const usersBefore = await liveToken(adm.page, "/api/admin/users/live"), eventsBefore = await liveToken(adm.page, "/api/admin/audit/live");
   await act(adm.page, () => row().locator("button:has-text('Disable')").click());
   check("admin disables the user", (await adm.page.innerText("body")).includes("User disabled"));
+  check("disabling a user changes the users token", (await liveToken(adm.page, "/api/admin/users/live")) !== usersBefore);
+  check("and the new security event changes the events token", (await liveToken(adm.page, "/api/admin/audit/live")) !== eventsBefore);
   await gotoSafe(nb.page, `${base}/review`);
   check("the disabled user's session is dead at once", new URL(nb.page.url()).origin === base && new URL(nb.page.url()).pathname === "/signin");
   await act(adm.page, () => row().locator("button:has-text('Enable')").click());
@@ -158,8 +168,10 @@ try {
   const proc2 = await signIn("sub-processor", "Processor");
   await gotoSafe(proc.page, `${base}/account`);
   check("a user sees both of their sessions and which is current", (await proc.page.locator("tbody tr").count()) >= 2 && (await proc.page.innerText("body")).includes("(this session)"));
+  const sessionsBefore = await liveToken(proc.page, "/api/account/live");
   await act(proc.page, () => proc.page.locator("tr:not(:has-text('(this session)')) button:has-text('End')").first().click());
   check("a user can end another of their own sessions", (await proc.page.innerText("body")).includes("Session ended"));
+  check("ending a session changes the sessions token", (await liveToken(proc.page, "/api/account/live")) !== sessionsBefore);
   await gotoSafe(proc2.page, `${base}/review`);
   check("and that browser is signed out", new URL(proc2.page.url()).origin === base && new URL(proc2.page.url()).pathname === "/signin");
   eq("the current session keeps working", (await call(proc.page, "GET", "/api/health")).status(), 200);

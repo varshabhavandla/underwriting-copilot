@@ -225,6 +225,15 @@ try {
     await shot(uw.page, name);
   }
 
+  // ---- I3. the admin screens update by themselves
+  await gotoSafe(adm.page, `${base}/admin/audit`); await adm.page.waitForSelector("tbody tr");
+  const eventsShown = await adm.page.locator("tbody tr").count();
+  const newcomer = await signIn("Viewer"); // a new sign-in records a new security event
+  const grew = await adm.page.waitForFunction((n) => document.querySelectorAll("tbody tr").length > n, eventsShown, { timeout: 40000 }).then(() => true, () => false);
+  step("the security events screen shows a new sign-in by itself, without a reload", grew, `${eventsShown} rows before`);
+  await shot(adm.page, "security-events-live");
+  await newcomer.ctx.close();
+
   // ---- J. sign out
   await gotoSafe(uw.page, `${base}/review`); await uw.page.click("button:has-text('Sign out')"); await until(uw.page, (u) => u.pathname === "/signed-out");
   step("clicking Sign out lands on a plain signed-out page (no redirect chain)", new URL(uw.page.url()).pathname === "/signed-out" && (await body(uw.page)).includes("You are signed out"));

@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { revokeMyOtherSessions, revokeMySession, type Outcome } from "@/admin/actions";
+import { sessionsVersion } from "@/admin/live";
 import { listMySessions } from "@/admin/queries";
 import { hashToken } from "@/auth/session";
 import { withTenant } from "@/db/client";
 import { requireSession } from "@/server/guard";
 import { currentSessionToken } from "@/server/services";
+import { LiveRefresh } from "../review/live-refresh";
 
 export const dynamic = "force-dynamic";
 const back = (o: Outcome) => redirect(`/account?${o.ok ? "msg" : "err"}=${encodeURIComponent(o.message)}`);
@@ -33,6 +35,7 @@ export default async function Account({ searchParams }: { searchParams: Promise<
       <p><Link href="/review">← Files</Link></p>
       <h1>Your sessions</h1>
       <p>Each browser you are signed in on. End any you do not recognize.</p>
+      <LiveRefresh url="/api/account/live" version={sessionsVersion(rows)} active={false} slowMs={5000} />
       {msg && <p role="status">{msg}</p>}
       {err && <p role="alert">{err}</p>}
       <table>

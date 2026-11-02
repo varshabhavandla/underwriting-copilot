@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createUser, linkIdentity, revokeUserSessions, setUserDisabled, setUserRole, unlinkIdentity, type Outcome } from "@/admin/actions";
+import { usersVersion } from "@/admin/live";
 import { listUsers } from "@/admin/queries";
 import { withTenant } from "@/db/client";
+import { LiveRefresh } from "../../review/live-refresh";
 import { requireSession } from "@/server/guard";
 import { getMyIdp } from "@/admin/sso";
 import { globalIdp } from "@/server/services";
@@ -33,6 +35,7 @@ export default async function Users({ searchParams }: { searchParams: Promise<{ 
       <p><Link href="/review">← Files</Link> · <Link href="/admin/audit">Security events</Link> · <Link href="/admin/sso">Single sign-on</Link></p>
       <h1>Users and access</h1>
       <p>Roles decide what a person can do. Only an underwriter can record a decision. Sign-in itself is handled by the identity provider; link each person&apos;s provider identity here before they can sign in.</p>
+      <LiveRefresh url="/api/admin/users/live" version={usersVersion(rows)} active={false} slowMs={5000} />
       {msg && <p role="status">{msg}</p>}
       {err && <p role="alert" style={{ borderLeft: "4px solid var(--crit)", paddingLeft: 8 }}>{err}</p>}
       <table>

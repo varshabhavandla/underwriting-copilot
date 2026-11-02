@@ -150,7 +150,7 @@ describe("route policy (authentication)", () => {
     const src = readFileSync(path, "utf8");
     if (OTHER.has(name!)) return;
     expect(src, `${name} must call services() and deny(...)`).toMatch(/await services\(\)/);
-    expect(src).toMatch(/deny\(s, "(view|intake|build|decide|deliver)"\)/);
+    expect(src).toMatch(/deny\(s, "(view|intake|build|decide|deliver|admin|account)"\)/);
   });
   it("control: the exceptions are real routes", () => { for (const k of OTHER.keys()) expect(routes2.some((r) => r.includes(`/api/${k}/route.ts`)), k).toBe(true); });
 });
