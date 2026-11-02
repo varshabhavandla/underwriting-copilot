@@ -143,7 +143,7 @@ try {
   await shot(uw.page, "clean-file-top");
   await uw.page.locator("h2:has-text('Credit memo draft')").scrollIntoViewIfNeeded(); await shot(uw.page, "clean-file-memo");
   const adopt = uw.page.locator("button:has-text('Adopt this memo')");
-  if (await adopt.count()) { await act(uw.page, () => adopt.click()); step("underwriter adopts the memo draft", (await body(uw.page)).includes("Memo adopted")); } else step("underwriter adopts the memo draft", false, "no adopt button");
+  if (await adopt.count()) { await act(uw.page, () => adopt.click()); step("underwriter adopts the memo draft", (await bodyWhen(uw.page, (x) => x.includes("Memo adopted"))).includes("Memo adopted")); } else step("underwriter adopts the memo draft", false, "no adopt button");
   // dispose each open exception with a note
   let disposed = 0;
   for (let i = 0; i < 6; i++) {
