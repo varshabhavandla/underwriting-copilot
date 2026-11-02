@@ -26,6 +26,7 @@ export DATABASE_URL="postgres://uw_app:uw_app_dev@$HOSTPORT/uw_e2e_auth" UPLOAD_
   OIDC_ISSUER="$ISS" OIDC_CLIENT_ID="$CLIENT" OIDC_CLIENT_SECRET="$SECRET" OIDC_REDIRECT_URI="http://127.0.0.1:$WEB_PORT/api/auth/callback" OIDC_REQUIRED_AMR=mfa
 fresh_next; bgstart node_modules/.bin/next dev -p "$WEB_PORT" > "$WORK/server.log" 2>&1 & SRV=$!
 for _ in $(seq 1 90); do curl -s -o /dev/null "http://127.0.0.1:$WEB_PORT/api/health" && break; sleep 1; done
+curl -s -o /dev/null "http://127.0.0.1:$WEB_PORT/api/health" || { echo "--- the web server did not answer in time; the tail of its log:"; tail -40 "$WORK/server.log"; }
 E2E_BASE="http://127.0.0.1:$WEB_PORT" E2E_IDP="$ISS" E2E_TENANT="$T" E2E_DB="$(echo "$UW_TEST_ADMIN_URL" | sed -E 's#/[^/]*$#/uw_e2e_auth#')" E2E_LOG="$WORK/server.log" node scripts/e2e-auth.mjs
 RC=$?
 [ $RC -ne 0 ] && { echo "--- sign-in log lines:"; grep -h '"sign-in' "$WORK/server.log" | tail -5; echo "--- idp log:"; tail -3 "$WORK/idp.log"; }
