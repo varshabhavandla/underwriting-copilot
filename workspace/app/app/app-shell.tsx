@@ -6,6 +6,7 @@ import { authEnabled, services } from "@/server/services";
 import { BRAND, Logo } from "./brand";
 import { Icon, type IconName } from "./icons";
 import { NavLink } from "./nav-link";
+import { SidebarFrame } from "./sidebar-frame";
 
 interface Item { href: string; label: string; icon: IconName }
 
@@ -66,8 +67,7 @@ export async function AppShell({ children }: { children: ReactNode }) {
   ];
   return (
     <div className="shell">
-      <aside className="sidebar">
-        <BrandLink href="/dashboard" light />
+      <SidebarFrame brand={<BrandLink href="/dashboard" light />}>
         <nav aria-label="Primary" className="nav">
           <Group label="Workspace" items={workspace} />
           <Group label="Platform" items={PLATFORM} />
@@ -75,7 +75,7 @@ export async function AppShell({ children }: { children: ReactNode }) {
           {can(role, "admin") ? <Group label="Admin" items={ADMIN} /> : null}
         </nav>
         <p className="side-note">The software prepares the file. Only an underwriter decides.</p>
-      </aside>
+      </SidebarFrame>
       <div className="content">
         <header className="topbar">
           <span className="who"><span className="avatar" aria-hidden="true">{role.charAt(0).toUpperCase()}</span>Signed in ({role})</span>

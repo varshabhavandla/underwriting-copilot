@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 export type IconName =
   | "dashboard" | "files" | "plus" | "spark" | "shield" | "target" | "clock" | "users" | "list" | "key" | "logout"
-  | "check" | "arrow" | "lock" | "layers" | "eye" | "scale" | "doc" | "bolt" | "search" | "help";
+  | "check" | "arrow" | "lock" | "layers" | "eye" | "scale" | "doc" | "bolt" | "search" | "help" | "menu" | "close";
 
 const PATHS: Record<IconName, ReactNode> = {
   dashboard: <><rect x="3" y="3" width="7" height="9" rx="1.8" /><rect x="14" y="3" width="7" height="5" rx="1.8" /><rect x="14" y="12" width="7" height="9" rx="1.8" /><rect x="3" y="16" width="7" height="5" rx="1.8" /></>,
@@ -26,6 +26,8 @@ const PATHS: Record<IconName, ReactNode> = {
   bolt: <path d="M13 3L5 14h6l-1 7 8-11h-6z" />,
   search: <><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></>,
   help: <><circle cx="12" cy="12" r="9" /><path d="M9.5 9.6a2.6 2.6 0 015.1.6c0 1.8-2.6 2.1-2.6 3.8M12 17.2h.01" /></>,
+  menu: <path d="M4 7h16M4 12h16M4 17h16" />,
+  close: <path d="M6 6l12 12M18 6L6 18" />,
 };
 
 /** Small stroke icons, drawn inline so the portal loads nothing from other hosts. They take their colour from the surrounding text. */
